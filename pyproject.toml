@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "google-models-cli"
+version = "0.1.0"
+description = "CLI toolchain to evaluate, optimize, deploy, and benchmark open-weights GenAI models on Google Cloud (GEAP/Vertex AI)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [
+    { name = "Google LLC" }
+]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "python-dotenv>=1.0.0",
+    "google-cloud-aiplatform>=1.44.0",
+    "google-cloud-storage>=2.14.0",
+    "google-cloud-resource-manager>=1.12.0",
+    "google-auth>=2.28.0",
+    "huggingface-hub>=0.20.0",
+    "pyyaml>=6.0.0",
+    "tabulate>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.3.0",
+]
+benchmark = [
+    "inference-perf>=0.6.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.scripts]
+models-cli = "google.models.cli.main:app"
+models = "google.models.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/google"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

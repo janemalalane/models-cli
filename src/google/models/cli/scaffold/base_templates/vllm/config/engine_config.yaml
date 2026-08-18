@@ -1,0 +1,22 @@
+# vLLM Engine Configuration & Hyperparameter Tuning
+# Note: The model source is managed in .env (MODEL) and injected as a GCS/local path at deployment.
+engine: vllm
+
+# Parallelism & Compute
+tensor_parallel_size: 1
+pipeline_parallel_size: 1
+gpu_memory_utilization: 0.90
+
+# KV Cache & Context
+kv_cache_dtype: "fp8"
+max_model_len: 4096
+max_num_seqs: 256
+max_num_batched_tokens: 2048
+
+# Optimizations
+enable_prefix_caching: true
+enable_chunked_prefill: true
+
+# Server Network
+host: "0.0.0.0"
+port: 8080

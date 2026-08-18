@@ -1,0 +1,3 @@
+{"prompt": "Describe the architecture of modern Transformer language models in 200 words.", "min_output_tokens": 100, "max_output_tokens": 250}
+{"prompt": "Write a complete bash script to automate GPU memory monitoring on Linux.", "min_output_tokens": 50, "max_output_tokens": 150}
+{"prompt": "What are the trade-offs between tensor parallelism and pipeline parallelism in LLM serving?", "min_output_tokens": 100, "max_output_tokens": 300}

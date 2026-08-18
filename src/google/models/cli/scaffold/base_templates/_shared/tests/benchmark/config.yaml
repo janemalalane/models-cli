@@ -1,0 +1,40 @@
+# inference-perf Benchmark Configuration
+# Note: Server endpoint and model are dynamically injected from .env or CLI options.
+api:
+  type: chat
+  streaming: true
+data:
+  type: synthetic #TODO: change to sharegpt by default
+  input_distribution:
+    max: 1024
+  output_distribution:
+    max: 256
+load:
+  type: constant
+  interval: 1.0
+  stages:
+  - rate: 2.0
+    duration: 10
+  - rate: 5.0
+    duration: 20
+  - rate: 10.0
+    duration: 30
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_request: true
+    percentiles:
+    - 50.0
+    - 90.0
+    - 95.0
+    - 99.0
+storage:
+  local_storage:
+    path: null
+    report_file_prefix: null 
+server:
+  type: vllm
+  model_name: null
+  base_url: null
+  api_key: null
