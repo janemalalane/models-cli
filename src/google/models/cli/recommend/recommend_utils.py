@@ -12,143 +12,416 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recommendation heuristics and hardware matching for models-cli."""
+"""Recommendation utilities powered strictly by the Google Cloud GKE Recommender service."""
 
-import re
 from pathlib import Path
 from typing import Any, Optional
 import yaml
+from google.protobuf.json_format import MessageToDict
+import google.auth.exceptions
+import google.api_core.exceptions
+
 from google.models.cli.common.constants import (
+    DEFAULT_PRICING_MODEL,
     HARDWARE_SPECS,
     AcceleratorFamily,
-    InferenceEngine,
-    OptimizationMetric,
 )
 
 
-def extract_parameter_count_billions(model_id: str) -> float:
-    """Extracts approximate parameter count in billions from model repo name.
+class ModelNotSupportedError(Exception):
+    """Raised when a model is not supported by the GKE Recommender service."""
 
-    Examples:
-        'google/gemma-4-31B-it' -> 31.0
-        'google/gemma-2-9b-it' -> 9.0
-        'meta-llama/Llama-3.1-70B-Instruct' -> 70.0
-        'mistralai/Mistral-7B-v0.1' -> 7.0
+    def __init__(self, model_id: str, supported_models: list[str]):
+        super().__init__(
+            f"Model '{model_id}' is not supported by the GKE Recommender service."
+        )
+        self.model_id = model_id
+        self.supported_models = supported_models
+
+
+def fetch_supported_models(client: Optional[Any] = None) -> list[str]:
+    """Fetches the list of supported model repositories from GKE Recommender."""
+    if client is None:
+        import google.cloud.gkerecommender_v1 as gke_rec
+
+        client = gke_rec.GkeInferenceQuickstartClient()
+
+    import google.cloud.gkerecommender_v1 as gke_rec
+
+    request = gke_rec.types.FetchModelsRequest()
+    try:
+        response = client.fetch_models(request=request)
+        return sorted([m for m in response])
+    except (
+        google.auth.exceptions.GoogleAuthError,
+        google.api_core.exceptions.Unauthenticated,
+        google.api_core.exceptions.PermissionDenied,
+    ):
+        raise
+    except Exception as exc:
+        from google.models.cli.common.auth import is_auth_error
+
+        if is_auth_error(exc):
+            raise
+        return []
+
+
+def _extract_workload_spec(p: Any) -> dict[str, Any]:
+    """Extracts WorkloadSpec (use_case, average_input_length, average_output_length).
+
+    Supports:
+    1. Direct attribute access (forward compatibility with future SDK releases containing workload_spec).
+    2. Dict access (when raw dictionary or MessageToDict is used).
+    3. Decoding Field 7 from the raw protobuf wire bytes preserved on p._pb.
     """
-    match = re.search(r"(\d+(?:\.\d+)?)\s*[bB]", model_id)
-    if match:
-        return float(match.group(1))
-    # Default fallback
-    return 31.0
+    # 1. Direct attribute (future SDK versions)
+    if hasattr(p, "workload_spec") and p.workload_spec:
+        ws = p.workload_spec
+        return {
+            "use_case": getattr(ws, "use_case", ""),
+            "average_input_length": getattr(ws, "average_input_length", 0),
+            "average_output_length": getattr(ws, "average_output_length", 0),
+        }
+
+    # 2. Dictionary access
+    if isinstance(p, dict):
+        ws = p.get("workloadSpec", {})
+        return {
+            "use_case": ws.get("useCase", ""),
+            "average_input_length": ws.get("averageInputLength", 0),
+            "average_output_length": ws.get("averageOutputLength", 0),
+        }
+
+    # 3. Decode Field 7 from raw protobuf wire bytes preserved on the message
+    pb = getattr(p, "_pb", None) or (p if hasattr(p, "SerializeToString") else None)
+    if pb is None:
+        return {}
+
+    try:
+        pb_bytes = pb.SerializeToString()
+        pos = 0
+        workload_spec: dict[str, Any] = {}
+        while pos < len(pb_bytes):
+            key = 0
+            shift = 0
+            while pos < len(pb_bytes):
+                b = pb_bytes[pos]
+                pos += 1
+                key |= (b & 0x7F) << shift
+                shift += 7
+                if not (b & 0x80):
+                    break
+            field_num = key >> 3
+            wire_type = key & 0x07
+            if wire_type == 0:
+                while pos < len(pb_bytes) and (pb_bytes[pos] & 0x80):
+                    pos += 1
+                pos += 1
+            elif wire_type == 1:
+                pos += 8
+            elif wire_type == 2:
+                length = 0
+                shift = 0
+                while pos < len(pb_bytes):
+                    b = pb_bytes[pos]
+                    pos += 1
+                    length |= (b & 0x7F) << shift
+                    shift += 7
+                    if not (b & 0x80):
+                        break
+                val_bytes = pb_bytes[pos : pos + length]
+                pos += length
+                if field_num == 7:
+                    sub_pos = 0
+                    while sub_pos < len(val_bytes):
+                        sub_key = 0
+                        sub_shift = 0
+                        while sub_pos < len(val_bytes):
+                            sb = val_bytes[sub_pos]
+                            sub_pos += 1
+                            sub_key |= (sb & 0x7F) << sub_shift
+                            sub_shift += 7
+                            if not (sb & 0x80):
+                                break
+                        sub_field = sub_key >> 3
+                        sub_wire = sub_key & 0x07
+                        if sub_wire == 0:
+                            v = 0
+                            s = 0
+                            while sub_pos < len(val_bytes):
+                                sb = val_bytes[sub_pos]
+                                sub_pos += 1
+                                v |= (sb & 0x7F) << s
+                                s += 7
+                                if not (sb & 0x80):
+                                    break
+                            if sub_field == 1:
+                                workload_spec["average_input_length"] = v
+                            elif sub_field == 2:
+                                workload_spec["average_output_length"] = v
+                        elif sub_wire == 2:
+                            v_len = 0
+                            s = 0
+                            while sub_pos < len(val_bytes):
+                                sb = val_bytes[sub_pos]
+                                sub_pos += 1
+                                v_len |= (sb & 0x7F) << s
+                                s += 7
+                                if not (sb & 0x80):
+                                    break
+                            s_val = val_bytes[sub_pos : sub_pos + v_len].decode("utf-8", errors="replace")
+                            sub_pos += v_len
+                            if sub_field == 3:
+                                workload_spec["use_case"] = s_val
+                        elif sub_wire == 1:
+                            sub_pos += 8
+                        elif sub_wire == 5:
+                            sub_pos += 4
+            elif wire_type == 5:
+                pos += 4
+        return workload_spec
+    except Exception:
+        return {}
 
 
-def estimate_model_memory_gb(param_count_b: float, precision: str = "fp8") -> float:
-    """Estimates required VRAM (weights + KV cache + runtime headroom) in GB.
+def _match_use_case(profile_use_case: str, target_use_case: Optional[str]) -> bool:
+    """Matches a workload use-case using case-insensitive shorthand keywords."""
+    if not target_use_case:
+        return True
+    if not profile_use_case:
+        # GKE Recommender SDK proto does not always include workloadSpec field
+        return True
+    target_lower = target_use_case.strip().lower()
+    profile_lower = profile_use_case.lower()
 
-    Args:
-        param_count_b: Parameter count in billions.
-        precision: Weight precision ('fp16', 'bf16', 'fp8', 'int4').
+    if target_lower in profile_lower:
+        return True
 
-    Returns:
-        Estimated required VRAM in gigabytes.
-    """
-    bytes_per_param = {
-        "fp16": 2.0,
-        "bf16": 2.0,
-        "fp8": 1.0,
-        "int4": 0.5,
-    }.get(precision.lower(), 1.0)
+    # Shorthand aliases
+    aliases = {
+        "chatbot": ["chatbot", "sharegpt"],
+        "chat": ["chatbot", "sharegpt"],
+        "summarization": ["summarization"],
+        "summary": ["summarization"],
+        "code": ["code completion"],
+        "code-completion": ["code completion"],
+        "text-generation": ["text generation"],
+        "generation": ["text generation"],
+        "deep-research": ["deep research"],
+        "research": ["deep research"],
+        "customer-support": ["customer support"],
+    }
+    keywords = aliases.get(target_lower, [target_lower])
+    return any(kw in profile_lower for kw in keywords)
 
-    weights_gb = param_count_b * bytes_per_param
-    # Headroom for KV-cache (4K-8K context) and CUDA/TPU runtime context (~30%)
-    total_required_gb = weights_gb * 1.35
-    return total_required_gb
 
-
-def generate_recommendations(
+def get_recommendations(
     model_id: str,
-    objective: OptimizationMetric = OptimizationMetric.COST,
+    model_server: Optional[str] = None,
+    model_server_version: Optional[str] = None,
+    target_cost_per_million_input_tokens: Optional[float] = None,
+    target_cost_per_million_output_tokens: Optional[float] = None,
+    output_input_cost_ratio: Optional[float] = None,
+    pricing_model: Optional[str] = DEFAULT_PRICING_MODEL,
+    target_ttft_milliseconds: Optional[int] = None,
+    target_ntpot_milliseconds: Optional[int] = None,
+    use_case: Optional[str] = None,
     family: AcceleratorFamily = AcceleratorFamily.ANY,
-    max_budget_hourly: Optional[float] = None,
-    engine: InferenceEngine = InferenceEngine.VLLM,
+    sort_by: str = "cost",
+    client: Optional[Any] = None,
 ) -> list[dict[str, Any]]:
-    """Generates ranked hardware configurations and engine parameters for a given model.
+    """Retrieves and ranks genuine hardware configurations from GKE Recommender service.
 
     Args:
         model_id: Hugging Face model repository identifier.
-        objective: Optimization target (ttft, tpot, throughput, cost).
+        model_server: Serving engine target (defaults to 'vllm').
+        model_server_version: Optional server version.
+        target_cost_per_million_input_tokens: Target cost per 1M input tokens in USD.
+        target_cost_per_million_output_tokens: Target cost per 1M output tokens in USD.
+        output_input_cost_ratio: Output-to-input token pricing ratio (e.g. 4.0).
+        pricing_model: Pricing model ('on-demand', 'spot', '1-year-cud', '3-years-cud').
+        target_ttft_milliseconds: Maximum Time to First Token in milliseconds.
+        target_ntpot_milliseconds: Maximum Normalized Time per Output Token in milliseconds.
+        use_case: Workload traffic pattern filter.
         family: Filter by GPU, TPU, or ANY.
-        max_budget_hourly: Optional maximum USD hourly rate ceiling.
-        engine: Target serving engine (vllm or sglang).
+        sort_by: Ranking metric ('cost', 'throughput', 'ttft', 'ntpot').
+        client: Optional GkeInferenceQuickstartClient instance for dependency injection.
 
     Returns:
-        List of recommendation dictionaries sorted by suitability for the objective.
+        Ranked list of recommendation dictionaries.
+
+    Raises:
+        ModelNotSupportedError: If model is not supported by GKE Recommender service.
     """
-    param_b = extract_parameter_count_billions(model_id)
-    required_vram_gb = estimate_model_memory_gb(param_b, precision="fp8")
+    if client is None:
+        import google.cloud.gkerecommender_v1 as gke_rec
+
+        client = gke_rec.GkeInferenceQuickstartClient()
+    else:
+        import google.cloud.gkerecommender_v1 as gke_rec
+
+    # 1. Build target Cost
+    cost_kwargs = {}
+    if target_cost_per_million_input_tokens is not None:
+        in_units = int(target_cost_per_million_input_tokens)
+        in_nanos = int(round((target_cost_per_million_input_tokens - in_units) * 1_000_000_000))
+        cost_kwargs["cost_per_million_input_tokens"] = gke_rec.types.Amount(units=in_units, nanos=in_nanos)
+
+    if target_cost_per_million_output_tokens is not None:
+        out_units = int(target_cost_per_million_output_tokens)
+        out_nanos = int(round((target_cost_per_million_output_tokens - out_units) * 1_000_000_000))
+        cost_kwargs["cost_per_million_output_tokens"] = gke_rec.types.Amount(units=out_units, nanos=out_nanos)
+
+    if output_input_cost_ratio is not None:
+        cost_kwargs["output_input_cost_ratio"] = float(output_input_cost_ratio)
+
+    target_pm = pricing_model or DEFAULT_PRICING_MODEL
+    cost_kwargs["pricing_model"] = target_pm
+
+    cost_obj = gke_rec.types.Cost(**cost_kwargs) if cost_kwargs else None
+
+    # 2. Build PerformanceRequirements
+    perf_kwargs = {}
+    if cost_obj:
+        perf_kwargs["target_cost"] = cost_obj
+    if target_ttft_milliseconds is not None:
+        perf_kwargs["target_ttft_milliseconds"] = int(target_ttft_milliseconds)
+    if target_ntpot_milliseconds is not None:
+        perf_kwargs["target_ntpot_milliseconds"] = int(target_ntpot_milliseconds)
+
+    perf_req = gke_rec.types.PerformanceRequirements(**perf_kwargs) if perf_kwargs else None
+
+    # 3. Build FetchProfilesRequest
+    req_kwargs: dict[str, Any] = {"model": model_id}
+    if model_server:
+        req_kwargs["model_server"] = model_server
+    if model_server_version:
+        req_kwargs["model_server_version"] = model_server_version
+    if perf_req:
+        req_kwargs["performance_requirements"] = perf_req
+
+    request = gke_rec.types.FetchProfilesRequest(**req_kwargs)
+
+    try:
+        profiles_pager = client.fetch_profiles(request=request)
+        raw_profiles = list(profiles_pager)
+    except (
+        google.auth.exceptions.GoogleAuthError,
+        google.api_core.exceptions.Unauthenticated,
+        google.api_core.exceptions.PermissionDenied,
+    ):
+        raise
+    except Exception as exc:
+        from google.models.cli.common.auth import is_auth_error
+
+        if is_auth_error(exc):
+            raise
+        try:
+            supported = fetch_supported_models(client)
+        except Exception:
+            supported = []
+        if supported and model_id not in supported:
+            raise ModelNotSupportedError(model_id, supported) from exc
+        raise
+
+    if not raw_profiles:
+        # Verify if model is supported at all
+        try:
+            supported = fetch_supported_models(client)
+        except Exception:
+            supported = []
+        if supported and model_id not in supported:
+            raise ModelNotSupportedError(model_id, supported)
+        return []
 
     candidates: list[dict[str, Any]] = []
 
-    for machine_type, spec in HARDWARE_SPECS.items():
-        # Check accelerator family filter
-        if family != AcceleratorFamily.ANY and spec["family"] != family:
+    for p in raw_profiles:
+        d = MessageToDict(p._pb) if hasattr(p, "_pb") else (p if isinstance(p, dict) else MessageToDict(p))
+
+        accelerator_type = d.get("acceleratorType", "")
+        instance_type = d.get("instanceType", "")
+        accelerator_count = d.get("resourcesUsed", {}).get("acceleratorCount", 1)
+
+        is_tpu = "tpu" in accelerator_type.lower() or instance_type.lower().startswith("ct")
+        profile_family = AcceleratorFamily.TPU if is_tpu else AcceleratorFamily.GPU
+
+        # Accelerator family filter
+        if family != AcceleratorFamily.ANY and profile_family != family:
             continue
 
-        # Check budget filter
-        if max_budget_hourly and spec["hourly_cost_usd"] > max_budget_hourly:
+        # Workload use-case filter
+        workload_spec = _extract_workload_spec(p)
+        profile_use_case = workload_spec.get("use_case", "")
+        if not _match_use_case(profile_use_case, use_case):
             continue
 
-        # Check if hardware has enough total VRAM
-        total_vram = spec["vram_gb"]
-        if total_vram < required_vram_gb:
-            continue
+        # Performance and cost metrics
+        stats_list = d.get("performanceStats", [])
+        stat0 = stats_list[0] if stats_list else {}
+        cost_list = stat0.get("cost", [])
 
-        # Determine Tensor Parallelism
-        chip_count = spec.get("accelerator_count", 1)
-        tp_size = max(1, chip_count)
+        target_pricing_str = target_pm.lower().replace("_", "-")
+        cost0 = {}
+        if cost_list:
+            matched = [
+                c for c in cost_list
+                if c.get("pricingModel", "").lower().replace("_", "-") == target_pricing_str
+            ]
+            cost0 = matched[0] if matched else cost_list[0]
 
-        # Generate engine parameters
-        engine_params = {
-            "tensor_parallel_size": tp_size,
-            "kv_cache_dtype": "fp8",
-            "max_model_len": 4096 if param_b >= 30 else 8192,
-            "gpu_memory_utilization": 0.90,
-            "enable_prefix_caching": True,
-            "enable_chunked_prefill": True,
-        }
+        in_nanos = cost0.get("costPerMillionInputTokens", {}).get("nanos", 0)
+        in_units = cost0.get("costPerMillionInputTokens", {}).get("units", 0)
+        input_cost = (in_units + in_nanos / 1_000_000_000) if (in_nanos or in_units) else None
 
-        # Estimate performance scores
-        bandwidth = spec.get("memory_bandwidth_gb_s", 500)
-        cost = spec["hourly_cost_usd"]
+        out_nanos = cost0.get("costPerMillionOutputTokens", {}).get("nanos", 0)
+        out_units = cost0.get("costPerMillionOutputTokens", {}).get("units", 0)
+        output_cost = (out_units + out_nanos / 1_000_000_000) if (out_nanos or out_units) else None
 
-        # Relative scoring heuristics
-        est_ttft_ms = round(max(35.0, (param_b * 1200.0) / bandwidth), 1)
-        est_tpot_ms = round(max(8.0, (param_b * 450.0) / bandwidth), 1)
-        est_throughput_tokens_sec = round((bandwidth / (param_b * 1.0)) * 0.75, 1)
+        ratio = cost0.get("outputInputCostRatio")
+        pricing = cost0.get("pricingModel") or target_pm
+
+        server_info = d.get("modelServerInfo", {})
 
         candidate = {
-            "machine_type": machine_type,
-            "chip_name": spec["chip_name"],
-            "family": spec["family"].value,
-            "vram_gb": spec["vram_gb"],
-            "hourly_cost_usd": cost,
-            "est_ttft_ms": est_ttft_ms,
-            "est_tpot_ms": est_tpot_ms,
-            "est_throughput_tokens_sec": est_throughput_tokens_sec,
-            "engine_params": engine_params,
-            "description": spec["description"],
+            "machine_type": instance_type,
+            "accelerator_type": accelerator_type,
+            "accelerator_count": accelerator_count,
+            "chip_name": f"{accelerator_type} ({accelerator_count}x)",
+            "family": profile_family.value,
+            "input_cost_per_m": round(input_cost, 4) if input_cost is not None else None,
+            "output_cost_per_m": round(output_cost, 4) if output_cost is not None else None,
+            "output_input_cost_ratio": ratio,
+            "pricing_model": pricing,
+            "ttft_ms": stat0.get("ttftMilliseconds"),
+            "ntpot_ms": stat0.get("ntpotMilliseconds"),
+            "itl_ms": stat0.get("itlMilliseconds"),
+            "output_tokens_per_sec": stat0.get("outputTokensPerSecond"),
+            "queries_per_sec": stat0.get("queriesPerSecond"),
+            "use_case": profile_use_case or (use_case or ""),
+            "model_server": server_info.get("modelServer") or model_server or "vllm",
+            "model_server_version": server_info.get("modelServerVersion", ""),
+            "engine_params": {
+                "tensor_parallel_size": accelerator_count,
+            },
         }
         candidates.append(candidate)
 
-    # Ranking logic
-    if objective == OptimizationMetric.COST:
-        candidates.sort(key=lambda x: (x["hourly_cost_usd"], x["est_ttft_ms"]))
-    elif objective == OptimizationMetric.TTFT:
-        candidates.sort(key=lambda x: (x["est_ttft_ms"], x["hourly_cost_usd"]))
-    elif objective == OptimizationMetric.TPOT:
-        candidates.sort(key=lambda x: (x["est_tpot_ms"], x["hourly_cost_usd"]))
-    elif objective == OptimizationMetric.THROUGHPUT:
-        candidates.sort(key=lambda x: (-x["est_throughput_tokens_sec"], x["hourly_cost_usd"]))
+    # Sort results
+    sort_key = sort_by.lower().strip()
+    if sort_key == "throughput":
+        candidates.sort(key=lambda x: -(x["output_tokens_per_sec"] or 0))
+    elif sort_key == "ttft":
+        candidates.sort(key=lambda x: (x["ttft_ms"] if x["ttft_ms"] is not None else 999999))
+    elif sort_key == "ntpot":
+        candidates.sort(key=lambda x: (x["ntpot_ms"] if x["ntpot_ms"] is not None else 999999))
+    else:  # Default to cost
+        candidates.sort(
+            key=lambda x: (
+                x["input_cost_per_m"] if x["input_cost_per_m"] is not None else 999999,
+                x["output_cost_per_m"] if x["output_cost_per_m"] is not None else 999999,
+            )
+        )
 
     return candidates
 
@@ -159,7 +432,16 @@ def apply_recommendation(
 ) -> bool:
     """Updates deployment_spec.yaml and engine_config.yaml with the recommended settings."""
     updated = False
-    spec = HARDWARE_SPECS.get(top_candidate["machine_type"], {})
+
+    machine_type = top_candidate["machine_type"]
+    accel_type = top_candidate.get("accelerator_type")
+    accel_count = top_candidate.get("accelerator_count")
+
+    # Fallback to HARDWARE_SPECS if not directly present in candidate
+    if not accel_type or not accel_count:
+        spec = HARDWARE_SPECS.get(machine_type, {})
+        accel_type = accel_type or spec.get("accelerator_type")
+        accel_count = accel_count or spec.get("accelerator_count", 1)
 
     # 1. Update config/deployment_spec.yaml
     deploy_file = project_dir / "config" / "deployment_spec.yaml"
@@ -168,9 +450,9 @@ def apply_recommendation(
             with open(deploy_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             dep = data.setdefault("deployment", {})
-            dep["machine_type"] = top_candidate["machine_type"]
-            dep["accelerator_type"] = spec.get("accelerator_type")
-            dep["accelerator_count"] = spec.get("accelerator_count")
+            dep["machine_type"] = machine_type
+            dep["accelerator_type"] = accel_type
+            dep["accelerator_count"] = accel_count
             with open(deploy_file, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
             updated = True
@@ -186,8 +468,6 @@ def apply_recommendation(
             params = top_candidate.get("engine_params", {})
             if "tensor_parallel_size" in params:
                 data["tensor_parallel_size"] = params["tensor_parallel_size"]
-            if "max_model_len" in params:
-                data["max_model_len"] = params["max_model_len"]
             with open(engine_file, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
             updated = True

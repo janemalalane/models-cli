@@ -52,8 +52,12 @@ class Settings(BaseSettings):
 
     # Google Cloud Configuration
     google_cloud_project: Optional[str] = None
-    google_cloud_location: str = os.environ.get("GOOGLE_CLOUD_LOCATION") or DEFAULT_REGION
-    google_cloud_storage_bucket: Optional[str] = os.environ.get("GOOGLE_CLOUD_STORAGE_BUCKET")
+    google_cloud_location: str = (
+        os.environ.get("GOOGLE_CLOUD_LOCATION") or DEFAULT_REGION
+    )
+    google_cloud_storage_bucket: Optional[str] = os.environ.get(
+        "GOOGLE_CLOUD_STORAGE_BUCKET"
+    )
     service_account_email: Optional[str] = os.environ.get("SERVICE_ACCOUNT_EMAIL")
 
     # Container / Docker Registry
@@ -89,7 +93,9 @@ class Settings(BaseSettings):
             override_project=override_project or self.google_cloud_project
         )
 
-    def validate_deployment_env(self, override_project: Optional[str] = None) -> dict[str, str]:
+    def validate_deployment_env(
+        self, override_project: Optional[str] = None
+    ) -> dict[str, str]:
         """Validates that essential deployment variables are set."""
         project_id = self.get_project_id(override_project)
         missing = []
@@ -100,11 +106,16 @@ class Settings(BaseSettings):
         if not self.service_account_email:
             missing.append("SERVICE_ACCOUNT_EMAIL")
 
-        if missing:
+        if (
+            not project_id
+            or not self.google_cloud_location
+            or not self.service_account_email
+        ):
             raise ValueError(
                 f"Missing required environment variables: {', '.join(missing)}. "
                 "Please configure them in your .env file or environment."
             )
+
         return {
             "project_id": project_id,
             "location": self.google_cloud_location,

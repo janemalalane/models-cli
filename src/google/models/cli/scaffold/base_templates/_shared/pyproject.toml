@@ -9,10 +9,10 @@ dependencies = [
     "google-cloud-aiplatform>=1.44.0",
     "google-cloud-storage>=2.14.0",
     "python-dotenv>=1.0.0",
+    "inference-perf>=0.6.0",
 ]
 
 [project.optional-dependencies]
 benchmark = [
-    "inference-perf>=0.6.0",
     "matplotlib>=3.8.0",
 ]

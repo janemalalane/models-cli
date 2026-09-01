@@ -84,6 +84,8 @@ def generate_benchmark_config(
         server_dict["type"] = "mock"
         server_dict["base_url"] = "http://localhost:8080"
         server_dict["model_name"] = model_name
+        if "load" in config_data and "stages" in config_data["load"]:
+            config_data["load"]["stages"] = [{"rate": 10.0, "duration": 1}]
     else:
         if data_dict.get("type") in ("custom", "mock", None):
             data_dict["type"] = "synthetic"
@@ -240,3 +242,44 @@ def generate_markdown_report(
 
     report_file.write_text(content, encoding="utf-8")
     return report_file
+
+
+def find_inference_perf_command() -> Optional[list[str]]:
+    """Resolves the executable command for running inference-perf.
+
+    Resolution order:
+    1. Executable binary in the current Python environment (sys.executable's bin directory).
+       This handles uv tool and virtualenv installs where the tool binary is not in global PATH.
+    2. Any 'inference-perf' binary in the active system PATH (via shutil.which).
+    3. Direct Python entrypoint invocation if the 'inference_perf' module is importable in the runtime:
+       `[sys.executable, "-c", "from inference_perf import main_cli; import sys; sys.exit(main_cli())"]`
+
+    Returns:
+        List of command tokens representing the executable (e.g. ['/path/to/inference-perf']
+        or [sys.executable, '-c', ...]), or None if inference-perf cannot be located.
+    """
+    import sys
+    import importlib.util
+
+    # 1. Check alongside sys.executable (same venv / uv tool directory)
+    py_dir = Path(sys.executable).parent
+    for candidate_name in ("inference-perf", "inference-perf.exe"):
+        candidate_bin = py_dir / candidate_name
+        if candidate_bin.is_file() and os.access(candidate_bin, os.X_OK):
+            return [str(candidate_bin)]
+
+    # 2. Check system PATH
+    which_bin = shutil.which("inference-perf")
+    if which_bin:
+        return [which_bin]
+
+    # 3. Check importable Python package
+    if importlib.util.find_spec("inference_perf") is not None:
+        return [
+            sys.executable,
+            "-c",
+            "from inference_perf import main_cli; import sys; sys.exit(main_cli())",
+        ]
+
+    return None
+

@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from google.models.cli._gcp_project import resolve_gcp_project
+from google.models.cli.common.auth import ensure_authenticated, is_auth_error
 from google.models.cli.common.config import settings
 from google.models.cli.common.constants import (
     DEFAULT_MODEL_REPO,
@@ -105,6 +106,9 @@ def deploy(
     ),
 ) -> None:
     """Deploys an open model container to a GEAP / Vertex AI online prediction endpoint."""
+    if not dry_run and not ensure_authenticated(interactive=True):
+        raise typer.Exit(1)
+
     # 1. Load defaults from config/deployment_spec.yaml if present
     spec_data = {}
     spec_path = Path("config/deployment_spec.yaml")

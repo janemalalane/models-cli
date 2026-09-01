@@ -20,7 +20,7 @@ import typer
 from rich.console import Console
 from rich.prompt import Prompt
 
-from google.models.cli._gcp_project import get_active_gcp_account, resolve_gcp_project
+from google.models.cli._gcp_project import resolve_gcp_project
 from google.models.cli.common.constants import (
     DEFAULT_ENGINE,
     DEFAULT_MODEL_REPO,
@@ -30,7 +30,6 @@ from google.models.cli.common.constants import (
 from google.models.cli.scaffold.scaffold_utils import (
     copy_and_render_templates,
     normalize_project_name,
-    verify_credentials_and_vertex,
 )
 
 console = Console()
@@ -144,38 +143,18 @@ def create_project(
             default=region or DEFAULT_REGION,
         )
 
-    # 5. GCP Project & Credentials Check
-    gcp_account = get_active_gcp_account() or "default"
-    resolved_project = resolve_gcp_project(override_project=project) or "YOUR_GCP_PROJECT_ID"
-
-    if is_interactive and not auto_approve and not skip_checks:
-        console.print("\n> Verifying GCP credentials...")
-        if gcp_account:
-            console.print(f"> You are logged in with account: [cyan]'{gcp_account}'[/cyan]")
-        console.print(f"> You are using project: [cyan]'{resolved_project}'[/cyan]")
-
-        choice = Prompt.ask(
-            "> Do you want to continue? (The CLI will check if Vertex AI is enabled in this project) [y/skip/edit]",
-            default="y",
-        ).lower().strip()
-
-        if choice == "edit":
-            resolved_project = Prompt.ask("> Enter GCP project ID", default=resolved_project)
-        elif choice == "skip":
-            skip_checks = True
-
-    if not skip_checks and resolved_project and resolved_project != "YOUR_GCP_PROJECT_ID":
-        console.print("> Testing Vertex AI connection...")
-        valid, msg = verify_credentials_and_vertex(project_id=resolved_project, location=region)
-        if not valid:
-            console.print("[bold yellow]⚠️  Looks like you are not authenticated with Google Cloud.[/bold yellow]")
-            console.print("Please run: [cyan]gcloud auth login --update-adc[/cyan]")
-            console.print(f"Then set your project: [cyan]gcloud config set project {resolved_project}[/cyan]")
-            console.print(f"Details: {msg}")
-            console.print("> Continuing with template processing...\n")
-        else:
-            console.print(f"[bold green]✅ Vertex AI API is ready in project '{resolved_project}'.[/bold green]\n")
-
+    # 5. GCP Project ID Selection
+    default_project = resolve_gcp_project(override_project=project) or "YOUR_GCP_PROJECT_ID"
+    if is_interactive and not auto_approve:
+        resolved_project = (
+            Prompt.ask(
+                "> 📁 Enter GCP project ID",
+                default=default_project,
+            ).strip()
+            or default_project
+        )
+    else:
+        resolved_project = default_project
     # 6. Context variables & Template rendering
     gcs_bucket = f"{resolved_project}-models" if resolved_project != "YOUR_GCP_PROJECT_ID" else "your-gcs-bucket"
     sa_email = f"models-sa@{resolved_project}.iam.gserviceaccount.com" if resolved_project != "YOUR_GCP_PROJECT_ID" else "your-sa@project.iam.gserviceaccount.com"

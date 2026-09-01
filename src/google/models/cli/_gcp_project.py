@@ -62,6 +62,26 @@ def _get_account_from_gcloud() -> Optional[str]:
     return None
 
 
+def list_accessible_gcp_projects(limit: int = 15) -> list[str]:
+    """Attempts to list accessible GCP project IDs via gcloud CLI."""
+    if not shutil.which("gcloud"):
+        return []
+    try:
+        result = subprocess.run(
+            ["gcloud", "projects", "list", f"--limit={limit}", "--format=value(projectId)"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            projects = [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
+            return projects
+    except Exception:
+        pass
+    return []
+
+
 def _get_project_from_adc() -> Optional[str]:
     """Retrieves project from Google Application Default Credentials."""
     try:
@@ -129,8 +149,8 @@ def resolve_gcp_project(
     Order of precedence:
     1. The `override_project` argument (e.g. from --project CLI flag).
     2. The `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT_ID` environment variable.
-    3. Application Default Credentials via `google.auth.default()`.
-    4. Active project in `gcloud config get-value project`.
+    3. Active project in `gcloud config get-value project` (fast local config check).
+    4. Application Default Credentials via `google.auth.default()`.
 
     Args:
         override_project: Explicit project ID override.
@@ -148,15 +168,15 @@ def resolve_gcp_project(
         if val and val.strip():
             return val.strip()
 
+    # Check gcloud CLI (reads local config without network or login check)
+    gcloud_project = _get_project_from_gcloud()
+    if gcloud_project:
+        return gcloud_project.strip()
+
     # Check ADC
     adc_project = _get_project_from_adc()
     if adc_project:
         return adc_project.strip()
-
-    # Check gcloud CLI
-    gcloud_project = _get_project_from_gcloud()
-    if gcloud_project:
-        return gcloud_project.strip()
 
     if required:
         raise ValueError(

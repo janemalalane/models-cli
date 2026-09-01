@@ -26,7 +26,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from google.models.cli._gcp_project import get_gcp_access_token
+from google.models.cli.common.auth import ensure_authenticated
 from google.models.cli.benchmark.benchmark_utils import (
+    find_inference_perf_command,
     generate_benchmark_config,
     generate_markdown_report,
     parse_lifecycle_metrics,
@@ -89,6 +91,8 @@ def benchmark(
             and "127.0.0.1" not in target_endpoint
         )
     ):
+        if not ensure_authenticated(interactive=True):
+            raise typer.Exit(1)
         fetched_token = get_gcp_access_token()
         if fetched_token:
             auth_token = fetched_token
@@ -128,10 +132,9 @@ def benchmark(
     console.print(f"   • Mock Mode:  [bold]{mock}[/bold]\n")
 
     # Run inference-perf if available
-    inf_perf_bin = shutil.which("inference-perf")
-    if inf_perf_bin:
-        cmd = [
-            inf_perf_bin,
+    inf_perf_cmd = find_inference_perf_command()
+    if inf_perf_cmd:
+        cmd = list(inf_perf_cmd) + [
             "--config",
             str(active_config_path),
             "--storage.local_storage.path",
@@ -167,9 +170,18 @@ def benchmark(
                 f"[bold yellow]⚠️ inference-perf execution warning: {e}[/bold yellow]"
             )
     else:
-        console.print(
-            "[dim]inference-perf CLI binary not found in PATH; parsing synthetic metrics.[/dim]"
-        )
+        if mock:
+            console.print(
+                "[dim]inference-perf CLI binary not found in PATH; parsing synthetic metrics for mock mode.[/dim]"
+            )
+        else:
+            console.print(
+                "[bold red]❌ inference-perf is required to benchmark a live endpoint.[/bold red]"
+            )
+            console.print(
+                "Please install dependencies with: [cyan]pip install google-models-cli[/cyan] or [cyan]pip install inference-perf[/cyan]"
+            )
+            raise typer.Exit(1)
 
     metrics = parse_lifecycle_metrics(out_path)
     report_file = generate_markdown_report(out_path, target_model, metrics)

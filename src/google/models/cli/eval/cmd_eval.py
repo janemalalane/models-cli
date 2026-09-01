@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 from rich.table import Table
 
+from google.models.cli.common.auth import ensure_authenticated
 from google.models.cli.common.constants import DEFAULT_MODEL_REPO
 from google.models.cli.eval.eval_utils import (
     evaluate_candidate_models,
@@ -67,6 +68,9 @@ def eval(
     ),
 ) -> None:
     """Evaluates candidate open models on a golden benchmark dataset and ranks the winner."""
+    if not mock and not ensure_authenticated(interactive=True):
+        raise typer.Exit(1)
+
     model_list = [m.strip() for m in models.split(",") if m.strip()]
     if not model_list:
         console.print("[bold red]❌ Error: No model names provided for evaluation.[/bold red]")

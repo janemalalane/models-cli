@@ -56,3 +56,60 @@ def test_benchmark_command_mock(tmp_path):
     )
     assert result.exit_code == 0
     assert "Inference Benchmark Summary" in result.stdout
+
+
+def test_find_inference_perf_command_alongside_python(tmp_path, monkeypatch):
+    import sys
+    from google.models.cli.benchmark.benchmark_utils import find_inference_perf_command
+
+    fake_bin = tmp_path / "inference-perf"
+    fake_bin.write_text("#!/bin/sh\nexit 0\n")
+    fake_bin.chmod(0o755)
+
+    fake_python = tmp_path / "python"
+    fake_python.touch()
+
+    monkeypatch.setattr(sys, "executable", str(fake_python))
+    cmd = find_inference_perf_command()
+    assert cmd == [str(fake_bin)]
+
+
+def test_find_inference_perf_command_in_path(tmp_path, monkeypatch):
+    import sys
+    from google.models.cli.benchmark.benchmark_utils import find_inference_perf_command
+
+    # Python dir has no inference-perf
+    fake_python = tmp_path / "python"
+    fake_python.touch()
+    monkeypatch.setattr(sys, "executable", str(fake_python))
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/inference-perf")
+    cmd = find_inference_perf_command()
+    assert cmd == ["/usr/local/bin/inference-perf"]
+
+
+def test_benchmark_live_missing_binary_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "google.models.cli.benchmark.cmd_benchmark.find_inference_perf_command",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "google.models.cli.benchmark.cmd_benchmark.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--model",
+            "google/gemma-4-31B-it",
+            "--endpoint",
+            "http://localhost:8080",
+            "--output-dir",
+            str(tmp_path / "live-bench"),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "inference-perf is required to benchmark a live endpoint" in result.output
+

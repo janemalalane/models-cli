@@ -111,3 +111,132 @@ def test_create_command(tmp_path):
     assert (tmp_path / target_name / ".env.example").is_file()
     assert (tmp_path / target_name / "pyproject.toml").is_file()
     assert (tmp_path / target_name / "config" / "engine_config.yaml").is_file()
+
+
+def test_interactive_create_custom_project(tmp_path, monkeypatch):
+    target_name = "interactive-app-custom"
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
+        lambda override_project=None: "active-gcp-proj",
+    )
+
+    # Inputs: model, engine, region, custom project ID
+    user_inputs = "\n".join([
+        "google/gemma-4-31B-it",  # model
+        "vllm",                   # engine
+        "us-central1",            # region
+        "my-desired-project",     # type desired project
+    ]) + "\n"
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            target_name,
+            "-i",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input=user_inputs,
+    )
+    assert result.exit_code == 0
+    assert "Enter GCP project ID" in result.output
+    env_content = (tmp_path / target_name / ".env").read_text()
+    assert 'GOOGLE_CLOUD_PROJECT="my-desired-project"' in env_content
+
+
+def test_interactive_create_accept_default_project(tmp_path, monkeypatch):
+    target_name = "interactive-app-default"
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
+        lambda override_project=None: "active-gcloud-config-proj",
+    )
+
+    # Inputs: model, engine, region, press enter to accept default project
+    user_inputs = "\n".join([
+        "google/gemma-4-31B-it",  # model
+        "vllm",                   # engine
+        "us-central1",            # region
+        "",                       # empty input -> accepts default active-gcloud-config-proj
+    ]) + "\n"
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            target_name,
+            "-i",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input=user_inputs,
+    )
+    assert result.exit_code == 0
+    assert "Enter GCP project ID" in result.output
+    env_content = (tmp_path / target_name / ".env").read_text()
+    assert 'GOOGLE_CLOUD_PROJECT="active-gcloud-config-proj"' in env_content
+
+
+def test_interactive_create_when_gcloud_config_empty_accept_placeholder(tmp_path, monkeypatch):
+    target_name = "empty-gcloud-placeholder"
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
+        lambda override_project=None: None,
+    )
+
+    # Inputs: model, engine, region, press enter to accept YOUR_GCP_PROJECT_ID
+    user_inputs = "\n".join([
+        "google/gemma-4-31B-it",  # model
+        "vllm",                   # engine
+        "us-central1",            # region
+        "",                       # empty input -> accepts default YOUR_GCP_PROJECT_ID
+    ]) + "\n"
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            target_name,
+            "-i",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input=user_inputs,
+    )
+    assert result.exit_code == 0
+    assert "YOUR_GCP_PROJECT_ID" in result.output
+    env_content = (tmp_path / target_name / ".env").read_text()
+    assert 'GOOGLE_CLOUD_PROJECT="YOUR_GCP_PROJECT_ID"' in env_content
+
+
+def test_interactive_create_when_gcloud_config_empty_user_types_project(tmp_path, monkeypatch):
+    target_name = "empty-gcloud-custom"
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
+        lambda override_project=None: None,
+    )
+
+    # Inputs: model, engine, region, type custom project
+    user_inputs = "\n".join([
+        "google/gemma-4-31B-it",  # model
+        "vllm",                   # engine
+        "us-central1",            # region
+        "typed-custom-project",
+    ]) + "\n"
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            target_name,
+            "-i",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input=user_inputs,
+    )
+    assert result.exit_code == 0
+    env_content = (tmp_path / target_name / ".env").read_text()
+    assert 'GOOGLE_CLOUD_PROJECT="typed-custom-project"' in env_content
+
+

@@ -38,6 +38,7 @@ class OptimizationMetric(str, Enum):
 DEFAULT_MODEL_REPO = "google/gemma-4-31B-it"
 DEFAULT_REGION = "us-central1"
 DEFAULT_ENGINE = InferenceEngine.VLLM
+DEFAULT_PRICING_MODEL = "on-demand"
 
 # Google Pre-built Serving Container Images for Vertex AI / GEAP
 DEFAULT_VLLM_CONTAINER_IMAGE = (
