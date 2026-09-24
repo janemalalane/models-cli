@@ -51,8 +51,18 @@ def generate_benchmark_config(
             "api": {"type": "chat", "streaming": True},
             "data": {
                 "type": "synthetic",
-                "input_distribution": {"max": 1024},
-                "output_distribution": {"max": 256},
+                "input_distribution": {
+                    "min": 10,
+                    "max": 1024,
+                    "mean": 512,
+                    "std_dev": 100,
+                },
+                "output_distribution": {
+                    "min": 10,
+                    "max": 256,
+                    "mean": 128,
+                    "std_dev": 30,
+                },
             },
             "load": {
                 "type": "constant",
@@ -89,8 +99,22 @@ def generate_benchmark_config(
     else:
         if data_dict.get("type") in ("custom", "mock", None):
             data_dict["type"] = "synthetic"
-            data_dict.setdefault("input_distribution", {"max": 1024})
-            data_dict.setdefault("output_distribution", {"max": 256})
+
+        inp_dist = data_dict.setdefault("input_distribution", {})
+        inp_dist.setdefault("min", 10)
+        inp_dist.setdefault("max", 1024)
+        inp_max = inp_dist.get("max", 1024)
+        inp_dist.setdefault("mean", min(512, max(10, inp_max // 2)))
+        inp_dist.setdefault("std_dev", 100)
+
+        out_dist = data_dict.setdefault("output_distribution", {})
+        out_dist.setdefault("min", 10)
+        out_dist.setdefault("max", 256)
+        out_max = out_dist.get("max", 256)
+        if "mean" not in out_dist or out_dist["mean"] > out_max:
+            out_dist["mean"] = min(128, max(10, out_max // 2))
+        out_dist.setdefault("std_dev", 30)
+
         server_dict["type"] = "vllm"
         server_dict["model_name"] = model_name
         server_dict["base_url"] = endpoint_url or "http://localhost:8080"
@@ -204,8 +228,8 @@ def generate_markdown_report(
 - **Model:** `{model_name}`
 - **Generated:** {timestamp}
 - **Tool:** `inference-perf`
-- **Total Requests:** {metrics.get('total_requests', 0)}
-- **Failed Requests:** {metrics.get('failed_requests', 0)}
+- **Total Requests:** {metrics.get("total_requests", 0)}
+- **Failed Requests:** {metrics.get("failed_requests", 0)}
 
 ---
 
@@ -213,8 +237,8 @@ def generate_markdown_report(
 
 | Metric | Measured Value | Target SLA | Status |
 | :--- | :---: | :---: | :---: |
-| **Request Throughput (QPS)** | **{metrics.get('request_throughput_qps', 0):.2f} req/s** | > 5.00 req/s | ✅ Passed |
-| **Token Throughput** | **{metrics.get('token_throughput_tokens_sec', 0):.1f} tok/s** | > 200.0 tok/s | ✅ Passed |
+| **Request Throughput (QPS)** | **{metrics.get("request_throughput_qps", 0):.2f} req/s** | > 5.00 req/s | ✅ Passed |
+| **Token Throughput** | **{metrics.get("token_throughput_tokens_sec", 0):.1f} tok/s** | > 200.0 tok/s | ✅ Passed |
 
 ---
 
@@ -222,18 +246,18 @@ def generate_markdown_report(
 
 | Percentile | Time to First Token (TTFT) | Time Per Output Token (TPOT) | End-to-End Latency |
 | :--- | :---: | :---: | :---: |
-| **p50** | {ttft.get('p50', 0):.1f} ms | {tpot.get('p50', 0):.1f} ms | {e2e.get('p50', 0):.1f} ms |
-| **p90** | {ttft.get('p90', 0):.1f} ms | {tpot.get('p90', 0):.1f} ms | {e2e.get('p90', 0):.1f} ms |
-| **p95** | {ttft.get('p95', 0):.1f} ms | {tpot.get('p95', 0):.1f} ms | {e2e.get('p95', 0):.1f} ms |
-| **p99** | {ttft.get('p99', 0):.1f} ms | {tpot.get('p99', 0):.1f} ms | {e2e.get('p99', 0):.1f} ms |
-| **Mean** | {ttft.get('mean', 0):.1f} ms | {tpot.get('mean', 0):.1f} ms | {e2e.get('mean', 0):.1f} ms |
+| **p50** | {ttft.get("p50", 0):.1f} ms | {tpot.get("p50", 0):.1f} ms | {e2e.get("p50", 0):.1f} ms |
+| **p90** | {ttft.get("p90", 0):.1f} ms | {tpot.get("p90", 0):.1f} ms | {e2e.get("p90", 0):.1f} ms |
+| **p95** | {ttft.get("p95", 0):.1f} ms | {tpot.get("p95", 0):.1f} ms | {e2e.get("p95", 0):.1f} ms |
+| **p99** | {ttft.get("p99", 0):.1f} ms | {tpot.get("p99", 0):.1f} ms | {e2e.get("p99", 0):.1f} ms |
+| **Mean** | {ttft.get("mean", 0):.1f} ms | {tpot.get("mean", 0):.1f} ms | {e2e.get("mean", 0):.1f} ms |
 
 ---
 
 ## 🎯 SLA Conformance
 
-- **TTFT (p90 < 150 ms):** `{'✅ Compliant' if ttft.get('p90', 0) < 150 else '⚠️ Violates SLA'}` ({ttft.get('p90', 0):.1f} ms)
-- **TPOT (p90 < 30 ms):** `{'✅ Compliant' if tpot.get('p90', 0) < 30 else '⚠️ Violates SLA'}` ({tpot.get('p90', 0):.1f} ms)
+- **TTFT (p90 < 150 ms):** `{"✅ Compliant" if ttft.get("p90", 0) < 150 else "⚠️ Violates SLA"}` ({ttft.get("p90", 0):.1f} ms)
+- **TPOT (p90 < 30 ms):** `{"✅ Compliant" if tpot.get("p90", 0) < 30 else "⚠️ Violates SLA"}` ({tpot.get("p90", 0):.1f} ms)
 
 ---
 
@@ -282,4 +306,3 @@ def find_inference_perf_command() -> Optional[list[str]]:
         ]
 
     return None
-

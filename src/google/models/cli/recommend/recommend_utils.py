@@ -48,7 +48,7 @@ def fetch_supported_models(client: Optional[Any] = None) -> list[str]:
 
     import google.cloud.gkerecommender_v1 as gke_rec
 
-    request = gke_rec.types.FetchModelsRequest()
+    request = gke_rec.FetchModelsRequest()
     try:
         response = client.fetch_models(request=request)
         return sorted([m for m in response])
@@ -169,7 +169,9 @@ def _extract_workload_spec(p: Any) -> dict[str, Any]:
                                 s += 7
                                 if not (sb & 0x80):
                                     break
-                            s_val = val_bytes[sub_pos : sub_pos + v_len].decode("utf-8", errors="replace")
+                            s_val = val_bytes[sub_pos : sub_pos + v_len].decode(
+                                "utf-8", errors="replace"
+                            )
                             sub_pos += v_len
                             if sub_field == 3:
                                 workload_spec["use_case"] = s_val
@@ -182,6 +184,20 @@ def _extract_workload_spec(p: Any) -> dict[str, Any]:
         return workload_spec
     except Exception:
         return {}
+
+
+# Standard GKE Inference Recommender use cases and their default average token distributions
+# (Matching `gcloud container ai profiles use-case list`)
+KNOWN_USE_CASE_LENGTHS: dict[str, tuple[int, int]] = {
+    "deep research": (256, 4096),
+    "text summarization": (1024, 128),
+    "multi agent large document summarization": (7936, 64),
+    "advanced customer support": (8912, 256),
+    "code completion": (512, 32),
+    "chatbot (sharegpt)": (128, 128),
+    "chatbot": (128, 128),
+    "text generation": (512, 2048),
+}
 
 
 def _match_use_case(profile_use_case: str, target_use_case: Optional[str]) -> bool:
@@ -226,6 +242,8 @@ def get_recommendations(
     target_ttft_milliseconds: Optional[int] = None,
     target_ntpot_milliseconds: Optional[int] = None,
     use_case: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
     family: AcceleratorFamily = AcceleratorFamily.ANY,
     sort_by: str = "cost",
     client: Optional[Any] = None,
@@ -264,13 +282,21 @@ def get_recommendations(
     cost_kwargs = {}
     if target_cost_per_million_input_tokens is not None:
         in_units = int(target_cost_per_million_input_tokens)
-        in_nanos = int(round((target_cost_per_million_input_tokens - in_units) * 1_000_000_000))
-        cost_kwargs["cost_per_million_input_tokens"] = gke_rec.types.Amount(units=in_units, nanos=in_nanos)
+        in_nanos = int(
+            round((target_cost_per_million_input_tokens - in_units) * 1_000_000_000)
+        )
+        cost_kwargs["cost_per_million_input_tokens"] = gke_rec.Amount(
+            units=in_units, nanos=in_nanos
+        )
 
     if target_cost_per_million_output_tokens is not None:
         out_units = int(target_cost_per_million_output_tokens)
-        out_nanos = int(round((target_cost_per_million_output_tokens - out_units) * 1_000_000_000))
-        cost_kwargs["cost_per_million_output_tokens"] = gke_rec.types.Amount(units=out_units, nanos=out_nanos)
+        out_nanos = int(
+            round((target_cost_per_million_output_tokens - out_units) * 1_000_000_000)
+        )
+        cost_kwargs["cost_per_million_output_tokens"] = gke_rec.Amount(
+            units=out_units, nanos=out_nanos
+        )
 
     if output_input_cost_ratio is not None:
         cost_kwargs["output_input_cost_ratio"] = float(output_input_cost_ratio)
@@ -278,7 +304,7 @@ def get_recommendations(
     target_pm = pricing_model or DEFAULT_PRICING_MODEL
     cost_kwargs["pricing_model"] = target_pm
 
-    cost_obj = gke_rec.types.Cost(**cost_kwargs) if cost_kwargs else None
+    cost_obj = gke_rec.Cost(**cost_kwargs) if cost_kwargs else None
 
     # 2. Build PerformanceRequirements
     perf_kwargs = {}
@@ -289,7 +315,7 @@ def get_recommendations(
     if target_ntpot_milliseconds is not None:
         perf_kwargs["target_ntpot_milliseconds"] = int(target_ntpot_milliseconds)
 
-    perf_req = gke_rec.types.PerformanceRequirements(**perf_kwargs) if perf_kwargs else None
+    perf_req = gke_rec.PerformanceRequirements(**perf_kwargs) if perf_kwargs else None
 
     # 3. Build FetchProfilesRequest
     req_kwargs: dict[str, Any] = {"model": model_id}
@@ -300,7 +326,7 @@ def get_recommendations(
     if perf_req:
         req_kwargs["performance_requirements"] = perf_req
 
-    request = gke_rec.types.FetchProfilesRequest(**req_kwargs)
+    request = gke_rec.FetchProfilesRequest(**req_kwargs)
 
     try:
         profiles_pager = client.fetch_profiles(request=request)
@@ -337,13 +363,19 @@ def get_recommendations(
     candidates: list[dict[str, Any]] = []
 
     for p in raw_profiles:
-        d = MessageToDict(p._pb) if hasattr(p, "_pb") else (p if isinstance(p, dict) else MessageToDict(p))
+        d = (
+            MessageToDict(p._pb)
+            if hasattr(p, "_pb")
+            else (p if isinstance(p, dict) else MessageToDict(p))
+        )
 
         accelerator_type = d.get("acceleratorType", "")
         instance_type = d.get("instanceType", "")
         accelerator_count = d.get("resourcesUsed", {}).get("acceleratorCount", 1)
 
-        is_tpu = "tpu" in accelerator_type.lower() or instance_type.lower().startswith("ct")
+        is_tpu = "tpu" in accelerator_type.lower() or instance_type.lower().startswith(
+            "ct"
+        )
         profile_family = AcceleratorFamily.TPU if is_tpu else AcceleratorFamily.GPU
 
         # Accelerator family filter
@@ -365,18 +397,30 @@ def get_recommendations(
         cost0 = {}
         if cost_list:
             matched = [
-                c for c in cost_list
-                if c.get("pricingModel", "").lower().replace("_", "-") == target_pricing_str
+                c
+                for c in cost_list
+                if c.get("pricingModel", "").lower().replace("_", "-")
+                == target_pricing_str
             ]
             cost0 = matched[0] if matched else cost_list[0]
 
-        in_nanos = cost0.get("costPerMillionInputTokens", {}).get("nanos", 0)
-        in_units = cost0.get("costPerMillionInputTokens", {}).get("units", 0)
-        input_cost = (in_units + in_nanos / 1_000_000_000) if (in_nanos or in_units) else None
+        in_nanos_raw = cost0.get("costPerMillionInputTokens", {}).get("nanos", 0)
+        in_units_raw = cost0.get("costPerMillionInputTokens", {}).get("units", 0)
+        in_nanos = int(in_nanos_raw) if in_nanos_raw is not None else 0
+        in_units = int(in_units_raw) if in_units_raw is not None else 0
+        input_cost = (
+            (in_units + in_nanos / 1_000_000_000) if (in_nanos or in_units) else None
+        )
 
-        out_nanos = cost0.get("costPerMillionOutputTokens", {}).get("nanos", 0)
-        out_units = cost0.get("costPerMillionOutputTokens", {}).get("units", 0)
-        output_cost = (out_units + out_nanos / 1_000_000_000) if (out_nanos or out_units) else None
+        out_nanos_raw = cost0.get("costPerMillionOutputTokens", {}).get("nanos", 0)
+        out_units_raw = cost0.get("costPerMillionOutputTokens", {}).get("units", 0)
+        out_nanos = int(out_nanos_raw) if out_nanos_raw is not None else 0
+        out_units = int(out_units_raw) if out_units_raw is not None else 0
+        output_cost = (
+            (out_units + out_nanos / 1_000_000_000)
+            if (out_nanos or out_units)
+            else None
+        )
 
         ratio = cost0.get("outputInputCostRatio")
         pricing = cost0.get("pricingModel") or target_pm
@@ -389,8 +433,12 @@ def get_recommendations(
             "accelerator_count": accelerator_count,
             "chip_name": f"{accelerator_type} ({accelerator_count}x)",
             "family": profile_family.value,
-            "input_cost_per_m": round(input_cost, 4) if input_cost is not None else None,
-            "output_cost_per_m": round(output_cost, 4) if output_cost is not None else None,
+            "input_cost_per_m": (
+                round(input_cost, 4) if input_cost is not None else None
+            ),
+            "output_cost_per_m": (
+                round(output_cost, 4) if output_cost is not None else None
+            ),
             "output_input_cost_ratio": ratio,
             "pricing_model": pricing,
             "ttft_ms": stat0.get("ttftMilliseconds"),
@@ -399,6 +447,18 @@ def get_recommendations(
             "output_tokens_per_sec": stat0.get("outputTokensPerSecond"),
             "queries_per_sec": stat0.get("queriesPerSecond"),
             "use_case": profile_use_case or (use_case or ""),
+            "average_input_length": (
+                workload_spec.get("average_input_length")
+                or KNOWN_USE_CASE_LENGTHS.get(
+                    (profile_use_case or use_case or "").strip().lower(), (None, None)
+                )[0]
+            ),
+            "average_output_length": (
+                workload_spec.get("average_output_length")
+                or KNOWN_USE_CASE_LENGTHS.get(
+                    (profile_use_case or use_case or "").strip().lower(), (None, None)
+                )[1]
+            ),
             "model_server": server_info.get("modelServer") or model_server or "vllm",
             "model_server_version": server_info.get("modelServerVersion", ""),
             "engine_params": {
@@ -407,19 +467,39 @@ def get_recommendations(
         }
         candidates.append(candidate)
 
+    # If custom token distribution is requested, interpolate performance metrics
+    if input_tokens is not None and output_tokens is not None:
+        from google.models.cli.recommend.interpolate_utils import (
+            interpolate_recommendations,
+        )
+
+        candidates = interpolate_recommendations(
+            recommendations=candidates,
+            target_input_tokens=input_tokens,
+            target_output_tokens=output_tokens,
+        )
+
     # Sort results
     sort_key = sort_by.lower().strip()
     if sort_key == "throughput":
         candidates.sort(key=lambda x: -(x["output_tokens_per_sec"] or 0))
     elif sort_key == "ttft":
-        candidates.sort(key=lambda x: (x["ttft_ms"] if x["ttft_ms"] is not None else 999999))
+        candidates.sort(
+            key=lambda x: (x["ttft_ms"] if x["ttft_ms"] is not None else 999999)
+        )
     elif sort_key == "ntpot":
-        candidates.sort(key=lambda x: (x["ntpot_ms"] if x["ntpot_ms"] is not None else 999999))
+        candidates.sort(
+            key=lambda x: (x["ntpot_ms"] if x["ntpot_ms"] is not None else 999999)
+        )
     else:  # Default to cost
         candidates.sort(
             key=lambda x: (
                 x["input_cost_per_m"] if x["input_cost_per_m"] is not None else 999999,
-                x["output_cost_per_m"] if x["output_cost_per_m"] is not None else 999999,
+                (
+                    x["output_cost_per_m"]
+                    if x["output_cost_per_m"] is not None
+                    else 999999
+                ),
             )
         )
 
@@ -449,10 +529,9 @@ def apply_recommendation(
         try:
             with open(deploy_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
-            dep = data.setdefault("deployment", {})
-            dep["machine_type"] = machine_type
-            dep["accelerator_type"] = accel_type
-            dep["accelerator_count"] = accel_count
+            data["machine_type"] = machine_type
+            data["accelerator_type"] = accel_type
+            data["accelerator_count"] = accel_count
             with open(deploy_file, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
             updated = True

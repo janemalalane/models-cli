@@ -1,4 +1,4 @@
-# Copyright 2026 Google LLC
+import click
 import pytest
 from google.models.cli._gcp_project import resolve_gcp_project
 
@@ -20,11 +20,10 @@ def test_resolve_gcp_project_required_raises(monkeypatch):
     monkeypatch.delenv("PROJECT_ID", raising=False)
     monkeypatch.delenv("CLOUDSDK_CORE_PROJECT", raising=False)
     
-    # Mock ADC and gcloud to return None
+    # Mock ADC to return None
     monkeypatch.setattr("google.models.cli._gcp_project._get_project_from_adc", lambda: None)
-    monkeypatch.setattr("google.models.cli._gcp_project._get_project_from_gcloud", lambda: None)
 
-    with pytest.raises(ValueError, match="Could not determine active Google Cloud project"):
+    with pytest.raises(click.ClickException, match="Could not determine GCP project"):
         resolve_gcp_project(required=True)
 
 
@@ -49,5 +48,28 @@ def test_get_project_from_gcloud_unset(monkeypatch):
     monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: mock_run)
 
     assert _get_project_from_gcloud() is None
+
+
+def test_get_gcp_project_number_numeric():
+    from google.models.cli._gcp_project import get_gcp_project_number
+
+    assert get_gcp_project_number("123456789") == "123456789"
+    assert get_gcp_project_number("") is None
+
+
+def test_get_gcp_project_number_resourcemanager(monkeypatch):
+    from unittest.mock import MagicMock
+    from google.models.cli._gcp_project import get_gcp_project_number
+
+    mock_client = MagicMock()
+    mock_proj = MagicMock()
+    mock_proj.name = "projects/9876543210"
+    mock_client.get_project.return_value = mock_proj
+
+    import google.cloud.resourcemanager_v3 as rm_v3
+    monkeypatch.setattr(rm_v3, "ProjectsClient", lambda: mock_client)
+
+    assert get_gcp_project_number("my-project") == "9876543210"
+    mock_client.get_project.assert_called_once_with(name="projects/my-project")
 
 

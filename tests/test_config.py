@@ -22,8 +22,12 @@ def test_settings_model_id_priority(monkeypatch):
     assert settings.model_id == "custom-model-id-123"
 
 
-def test_settings_validate_deployment_missing():
-    settings = Settings(google_cloud_project=None, service_account_email=None)
+def test_settings_validate_deployment_missing(monkeypatch):
+    monkeypatch.setattr(
+        "google.models.cli.common.config.resolve_gcp_project",
+        lambda override_project=None: None,
+    )
+    settings = Settings(google_cloud_project=None)
     with pytest.raises(ValueError, match="Missing required environment variables"):
         settings.validate_deployment_env()
 

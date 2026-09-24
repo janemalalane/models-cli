@@ -95,7 +95,7 @@ class Settings(BaseSettings):
 
     def validate_deployment_env(
         self, override_project: Optional[str] = None
-    ) -> dict[str, str]:
+    ) -> dict[str, str | None]:
         """Validates that essential deployment variables are set."""
         project_id = self.get_project_id(override_project)
         missing = []
@@ -103,14 +103,8 @@ class Settings(BaseSettings):
             missing.append("GOOGLE_CLOUD_PROJECT")
         if not self.google_cloud_location:
             missing.append("GOOGLE_CLOUD_LOCATION")
-        if not self.service_account_email:
-            missing.append("SERVICE_ACCOUNT_EMAIL")
 
-        if (
-            not project_id
-            or not self.google_cloud_location
-            or not self.service_account_email
-        ):
+        if not project_id or not self.google_cloud_location:
             raise ValueError(
                 f"Missing required environment variables: {', '.join(missing)}. "
                 "Please configure them in your .env file or environment."

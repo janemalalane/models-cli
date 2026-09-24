@@ -6,9 +6,15 @@ api:
 data:
   type: synthetic #TODO: change to sharegpt by default
   input_distribution:
+    min: 10
     max: 1024
+    mean: 512
+    std_dev: 100
   output_distribution:
+    min: 10
     max: 256
+    mean: 128
+    std_dev: 30
 load:
   type: constant
   interval: 1.0

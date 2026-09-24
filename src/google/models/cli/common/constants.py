@@ -16,10 +16,30 @@
 
 from enum import Enum
 
+# Google Pre-built Serving Container Images for Vertex AI / GEAP
+DEFAULT_VLLM_CONTAINER_IMAGE = "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-vllm-serve:latest"
+DEFAULT_SGLANG_CONTAINER_IMAGE = "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-sglang-serve:latest"
+
 
 class InferenceEngine(str, Enum):
     VLLM = "vllm"
     SGLANG = "sglang"
+
+    @property
+    def image_uri(self) -> str:
+        images = {
+            InferenceEngine.VLLM: DEFAULT_VLLM_CONTAINER_IMAGE,
+            InferenceEngine.SGLANG: DEFAULT_SGLANG_CONTAINER_IMAGE,
+        }
+        return images[self]
+
+    @property
+    def env_vars(self) -> dict[str, str]:
+        envs = {
+            InferenceEngine.VLLM: {"VLLM_LOGGING_LEVEL": "INFO"},
+            InferenceEngine.SGLANG: {"SGLANG_LOGGING_LEVEL": "INFO"},
+        }
+        return envs[self]
 
 
 class AcceleratorFamily(str, Enum):
@@ -29,34 +49,45 @@ class AcceleratorFamily(str, Enum):
 
 
 class OptimizationMetric(str, Enum):
-    TTFT = "ttft"          # Time to First Token
-    TPOT = "tpot"          # Time per Output Token
+    TTFT = "ttft"  # Time to First Token
+    TPOT = "tpot"  # Time per Output Token
     THROUGHPUT = "throughput"  # Requests or Tokens per second
-    COST = "cost"          # Price per hour / Price per token
+    COST = "cost"  # Price per hour / Price per token
 
 
 DEFAULT_MODEL_REPO = "google/gemma-4-31B-it"
 DEFAULT_REGION = "us-central1"
-DEFAULT_ENGINE = InferenceEngine.VLLM
+DEFAULT_ENGINE = "vllm"
 DEFAULT_PRICING_MODEL = "on-demand"
 
-# Google Pre-built Serving Container Images for Vertex AI / GEAP
-DEFAULT_VLLM_CONTAINER_IMAGE = (
-    "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-vllm-serve:latest"
-)
-DEFAULT_SGLANG_CONTAINER_IMAGE = (
-    "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-sglang-serve:latest"
-)
 
 # Standard Container Routes & Networking
 DEFAULT_PREDICTION_ROUTE = "/*"
 DEFAULT_HEALTH_ROUTE = "/health"
 DEFAULT_CONTAINER_PORT = 8080
+DEFAULT_CONTAINER_HOST = "0.0.0.0"
+DEFAULT_HOST = DEFAULT_CONTAINER_HOST
 DEFAULT_SHARED_MEMORY_MB = 64 * 1024  # 64 GB
+
+# Default Engine Parameters
+DEFAULT_TENSOR_PARALLEL_SIZE = 1
+DEFAULT_MAX_MODEL_LEN = 4096
+DEFAULT_KV_CACHE_DTYPE = "fp8"
+DEFAULT_GPU_MEMORY_UTILIZATION = 0.90
 
 # Standard Hardware Catalog for GEAP / Vertex AI
 HARDWARE_SPECS: dict[str, dict] = {
     # Nvidia GPUs
+    "a4-highgpu-8g": {
+        "family": AcceleratorFamily.GPU,
+        "chip_name": "Nvidia A4",
+        "accelerator_type": "NVIDIA_B200",
+        "accelerator_count": 8,
+        "vram_gb": 3968,
+        "hourly_cost_usd": 0.50,
+        "memory_bandwidth_gb_s": 200,
+        "description": "Cost-effective GPU for small models (up to 7B FP8/INT4)",
+    },
     "g2-standard-8": {
         "family": AcceleratorFamily.GPU,
         "chip_name": "Nvidia L4",
@@ -71,21 +102,51 @@ HARDWARE_SPECS: dict[str, dict] = {
         "family": AcceleratorFamily.GPU,
         "chip_name": "Nvidia L4 (4x)",
         "accelerator_type": "NVIDIA_L4",
-        "accelerator_count": 4,
-        "vram_gb": 96,
+        "accelerator_count": 1,
+        "vram_gb": 192,
         "hourly_cost_usd": 3.40,
         "memory_bandwidth_gb_s": 1200,
         "description": "Multi-GPU L4 setup for medium models (up to 30B FP8)",
     },
     "g4-standard-48": {
         "family": AcceleratorFamily.GPU,
-        "chip_name": "Nvidia G4",
-        "accelerator_type": "NVIDIA_G4",
+        "chip_name": "Nvidia RTX PRO 6000",
+        "accelerator_type": "NVIDIA_RTX_PRO_6000",
         "accelerator_count": 1,
         "vram_gb": 48,
-        "hourly_cost_usd": 1.95,
-        "memory_bandwidth_gb_s": 800,
-        "description": "High-availability GPU accelerator for Gemma, Llama, and GLM",
+        "hourly_cost_usd": 1.30,
+        "memory_bandwidth_gb_s": 850,
+        "description": "RTX PRO 6000 GPU for medium models (up to 30B FP8) and high-throughput inference",
+    },
+    "g4-standard-96": {
+        "family": AcceleratorFamily.GPU,
+        "chip_name": "Nvidia RTX PRO 6000",
+        "accelerator_type": "NVIDIA_RTX_PRO_6000",
+        "accelerator_count": 2,
+        "vram_gb": 96,
+        "hourly_cost_usd": 2.60,
+        "memory_bandwidth_gb_s": 1700,
+        "description": "Nvidia RTX PRO 6000 Blackwell GPU for high-throughput LLM inference",
+    },
+    "g4-standard-192": {
+        "family": AcceleratorFamily.GPU,
+        "chip_name": "Nvidia RTX PRO 6000 (4x)",
+        "accelerator_type": "NVIDIA_RTX_PRO_6000",
+        "accelerator_count": 4,
+        "vram_gb": 192,
+        "hourly_cost_usd": 10.40,
+        "memory_bandwidth_gb_s": 6800,
+        "description": "Quad RTX PRO 6000 GPUs for multi-GPU inference and large context windows",
+    },
+    "g4-standard-384": {
+        "family": AcceleratorFamily.GPU,
+        "chip_name": "Nvidia RTX PRO 6000 (8x)",
+        "accelerator_type": "NVIDIA_RTX_PRO_6000",
+        "accelerator_count": 8,
+        "vram_gb": 384,
+        "hourly_cost_usd": 20.80,
+        "memory_bandwidth_gb_s": 13600,
+        "description": "8x RTX PRO 6000 GPU cluster for massive multi-GPU model serving",
     },
     "a2-highgpu-1g": {
         "family": AcceleratorFamily.GPU,
@@ -115,6 +176,16 @@ HARDWARE_SPECS: dict[str, dict] = {
         "vram_gb": 640,
         "hourly_cost_usd": 30.00,
         "memory_bandwidth_gb_s": 26800,
+        "description": "Ultra-performance 8x H100 cluster for massive concurrency",
+    },
+    "a3-ultragpu-8g": {
+        "family": AcceleratorFamily.GPU,
+        "chip_name": "Nvidia H100-80GB (8x)",
+        "accelerator_type": "NVIDIA_H200_141GB",
+        "accelerator_count": 8,
+        "vram_gb": 141,
+        "hourly_cost_usd": 30.00,
+        "memory_bandwidth_gb_s": 2952,
         "description": "Ultra-performance 8x H100 cluster for massive concurrency",
     },
     # Google TPUs

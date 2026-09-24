@@ -15,7 +15,7 @@
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from google.models.cli.common.auth import (
     check_adc_validity,

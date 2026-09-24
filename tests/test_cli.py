@@ -1,5 +1,5 @@
 # Copyright 2026 Google LLC
-from typer.testing import CliRunner
+from click.testing import CliRunner
 from google.models.cli import __version__
 from google.models.cli.main import app
 

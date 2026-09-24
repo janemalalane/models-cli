@@ -14,10 +14,12 @@
 
 """GCP project resolution and lookup utilities."""
 
+import click
 import os
 import shutil
 import subprocess
 from typing import Optional
+import subprocess
 
 
 def _get_project_from_gcloud() -> Optional[str]:
@@ -68,30 +70,42 @@ def list_accessible_gcp_projects(limit: int = 15) -> list[str]:
         return []
     try:
         result = subprocess.run(
-            ["gcloud", "projects", "list", f"--limit={limit}", "--format=value(projectId)"],
+            [
+                "gcloud",
+                "projects",
+                "list",
+                f"--limit={limit}",
+                "--format=value(projectId)",
+            ],
             capture_output=True,
             text=True,
             check=False,
             timeout=5,
         )
         if result.returncode == 0:
-            projects = [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
+            projects = [
+                p.strip() for p in result.stdout.strip().splitlines() if p.strip()
+            ]
             return projects
     except Exception:
         pass
     return []
 
 
-def _get_project_from_adc() -> Optional[str]:
+def _get_adc_project() -> Optional[str]:
     """Retrieves project from Google Application Default Credentials."""
     try:
         import google.auth
+
         _, project_id = google.auth.default()
         if project_id:
             return project_id
     except Exception:
         pass
     return None
+
+
+_get_project_from_adc = _get_adc_project
 
 
 def get_active_gcp_account() -> Optional[str]:
@@ -140,49 +154,70 @@ def get_gcp_access_token() -> Optional[str]:
 
 
 def resolve_gcp_project(
-    override_project: Optional[str] = None,
-    *,
-    required: bool = False,
-) -> Optional[str]:
+    override_project: str | None = None, *, required: bool = False
+) -> str:
     """Resolves the GCP project ID to use.
 
-    Order of precedence:
-    1. The `override_project` argument (e.g. from --project CLI flag).
-    2. The `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT_ID` environment variable.
-    3. Active project in `gcloud config get-value project` (fast local config check).
-    4. Application Default Credentials via `google.auth.default()`.
+    The project ID is resolved in the following order of precedence:
 
-    Args:
-        override_project: Explicit project ID override.
-        required: If True and project cannot be resolved, raises ValueError.
+    1.  The ``override_project`` argument if provided.
+        It's expected this would come from a --project command line argument.
+    2.  The ``GOOGLE_CLOUD_PROJECT`` environment variable.
+    3.  Application Default Credentials via :func:`google.auth.default`,
+        which itself checks (in order):
+
+        a.  ``GOOGLE_APPLICATION_CREDENTIALS`` service account JSON file.
+        b.  The gcloud SDK ADC file
+            (``gcloud auth application-default login``); when this file
+            exists but lacks a project, the gcloud SDK falls back to
+            ``gcloud config get-value project``.
+        c.  GAE metadata service.
 
     Returns:
-        Resolved project ID string or None.
+        The resolved GCP project ID, or an empty string if no project is found.
     """
     if override_project:
-        return override_project.strip()
+        return override_project
+    env_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if env_project:
+        return env_project
 
-    # Check environment variables
-    for env_key in ("GOOGLE_CLOUD_PROJECT", "GCP_PROJECT_ID", "PROJECT_ID", "CLOUDSDK_CORE_PROJECT"):
-        val = os.environ.get(env_key)
-        if val and val.strip():
-            return val.strip()
-
-    # Check gcloud CLI (reads local config without network or login check)
-    gcloud_project = _get_project_from_gcloud()
-    if gcloud_project:
-        return gcloud_project.strip()
-
-    # Check ADC
-    adc_project = _get_project_from_adc()
-    if adc_project:
-        return adc_project.strip()
-
-    if required:
-        raise ValueError(
-            "Could not determine active Google Cloud project.\n"
-            "Please specify via --project, set the GOOGLE_CLOUD_PROJECT environment variable, "
-            "or configure gcloud via `gcloud config set project <PROJECT_ID>`."
+    project = _get_project_from_adc() or ""
+    if required and not project:
+        raise click.ClickException(
+            "Could not determine GCP project. Set one with:\n"
+            "  * pass --project <PROJECT_ID>\n"
+            "  * export GOOGLE_CLOUD_PROJECT=<PROJECT_ID>\n"
+            "  * gcloud config set project <PROJECT_ID>"
         )
+    return project
+
+
+def get_gcp_project_number(project_id: str) -> str | None:
+    """Get numeric GCP project number for a project ID or project number using Resource Manager API.
+
+    Args:
+        project_id: GCP project ID or project number (e.g., 'my-project' or '123456789').
+
+    Returns:
+        Project number string, or None if lookup fails.
+    """
+    if not project_id:
+        return None
+
+    if project_id.isdigit():
+        return project_id
+
+    try:
+        from google.cloud import resourcemanager_v3
+
+        client = resourcemanager_v3.ProjectsClient()
+        project = client.get_project(name=f"projects/{project_id}")
+        if project.name and "/" in project.name:
+            number = project.name.split("/")[-1]
+            if number.isdigit():
+                return number
+    except Exception:
+        pass
 
     return None

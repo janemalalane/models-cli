@@ -17,9 +17,10 @@
 import json
 from pathlib import Path
 from typing import Optional
-import typer
+import click
 from rich.console import Console
-from rich.prompt import Confirm
+from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 import google.auth.exceptions
 import google.api_core.exceptions
@@ -38,120 +39,184 @@ from google.models.cli.recommend.recommend_utils import (
     get_recommendations,
 )
 
+
+def _format_distribution_ratio(input_tokens: int, output_tokens: int) -> str:
+    """Formats the custom distribution ratio without decimal places (e.g. 8:1 or 1:4)."""
+    if input_tokens >= output_tokens:
+        ratio_int = int(round(input_tokens / max(output_tokens, 1)))
+        return f"{ratio_int}:1"
+    else:
+        ratio_int = int(round(output_tokens / max(input_tokens, 1)))
+        return f"1:{ratio_int}"
+
+
 console = Console()
-recommend_cmd = typer.Typer(
-    name="recommend",
-    help="Hardware & engine parameter recommendations from Google Cloud GKE Recommender.",
+
+
+@click.command("recommend")
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Hugging Face model repository identifier (e.g. google/gemma-3-4b-it).",
 )
-
-
-@recommend_cmd.callback(invoke_without_command=True)
+@click.option(
+    "--target-cost-per-million-input-tokens",
+    type=float,
+    default=None,
+    help="Target maximum cost per 1M input tokens in USD.",
+)
+@click.option(
+    "--target-cost-per-million-output-tokens",
+    type=float,
+    default=None,
+    help="Target maximum cost per 1M output tokens in USD.",
+)
+@click.option(
+    "--output-input-cost-ratio",
+    "-r",
+    type=float,
+    default=None,
+    help="Pricing conversion ratio between output and input tokens (e.g. 4.0).",
+)
+@click.option(
+    "--target-ttft-milliseconds",
+    type=int,
+    default=None,
+    help="Maximum Time to First Token in milliseconds.",
+)
+@click.option(
+    "--target-ntpot-milliseconds",
+    type=int,
+    default=None,
+    help="Maximum Normalized Time per Output Token in milliseconds.",
+)
+@click.option(
+    "--use-case",
+    "-u",
+    default=None,
+    help="Workload traffic pattern filter (e.g. chatbot (32:1), summarization (8:1), code-completion (16:1), text-generation (1:4), deep-research (1:16)).",
+)
+@click.option(
+    "--input-tokens",
+    "-I",
+    type=int,
+    default=None,
+    help="Target average prompt tokens for custom workload distribution (interpolates profile).",
+)
+@click.option(
+    "--output-tokens",
+    "-O",
+    type=int,
+    default=None,
+    help="Target average generation tokens for custom workload distribution (interpolates profile).",
+)
+@click.option(
+    "--pricing-model",
+    default=DEFAULT_PRICING_MODEL,
+    help="Pricing model tier ('on-demand', 'spot', '1-year-cud', '3-years-cud').",
+)
+@click.option(
+    "--model-server",
+    "--engine",
+    "-e",
+    default=None,
+    help="Serving engine target (defaults to server matching model profile, e.g. 'vllm').",
+)
+@click.option(
+    "--model-server-version",
+    default=None,
+    help="Optional model server version string.",
+)
+@click.option(
+    "--family",
+    "-f",
+    default=AcceleratorFamily.ANY.value,
+    help="Accelerator family: 'gpu', 'tpu', or 'any'.",
+)
+@click.option(
+    "--sort-by",
+    "-s",
+    default="cost",
+    help="Sort recommendations by: 'cost' (default), 'throughput', 'ttft', or 'ntpot'.",
+)
+@click.option(
+    "--format",
+    "-F",
+    "format_type",
+    default="table",
+    help="Output format: 'table' or 'json'.",
+)
+@click.option(
+    "--apply",
+    "-a",
+    is_flag=True,
+    default=False,
+    help="Write the top recommended machine type and engine tuning to config/deployment_spec.yaml.",
+)
+@click.option(
+    "--list-models",
+    is_flag=True,
+    default=False,
+    help="List all supported models in GKE Recommender and exit.",
+)
 def recommend(
-    model: Optional[str] = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Hugging Face model repository identifier (e.g. google/gemma-3-4b-it).",
-    ),
-    target_cost_per_million_input_tokens: Optional[float] = typer.Option(
-        None,
-        "--target-cost-per-million-input-tokens",
-        help="Target maximum cost per 1M input tokens in USD.",
-    ),
-    target_cost_per_million_output_tokens: Optional[float] = typer.Option(
-        None,
-        "--target-cost-per-million-output-tokens",
-        help="Target maximum cost per 1M output tokens in USD.",
-    ),
-    output_input_cost_ratio: Optional[float] = typer.Option(
-        None,
-        "--output-input-cost-ratio",
-        "-r",
-        help="Pricing conversion ratio between output and input tokens (e.g. 4.0).",
-    ),
-    target_ttft_milliseconds: Optional[int] = typer.Option(
-        None,
-        "--target-ttft-milliseconds",
-        help="Maximum Time to First Token in milliseconds.",
-    ),
-    target_ntpot_milliseconds: Optional[int] = typer.Option(
-        None,
-        "--target-ntpot-milliseconds",
-        help="Maximum Normalized Time per Output Token in milliseconds.",
-    ),
-    use_case: Optional[str] = typer.Option(
-        None,
-        "--use-case",
-        "-u",
-        help="Workload traffic pattern filter (e.g. chatbot, summarization, code-completion, text-generation, deep-research).",
-    ),
-    pricing_model: str = typer.Option(
-        DEFAULT_PRICING_MODEL,
-        "--pricing-model",
-        help="Pricing model tier ('on-demand', 'spot', '1-year-cud', '3-years-cud').",
-    ),
-    model_server: Optional[str] = typer.Option(
-        None,
-        "--model-server",
-        "--engine",
-        "-e",
-        help="Serving engine target (defaults to server matching model profile, e.g. 'vllm').",
-    ),
-    model_server_version: Optional[str] = typer.Option(
-        None,
-        "--model-server-version",
-        help="Optional model server version string.",
-    ),
-    family: str = typer.Option(
-        AcceleratorFamily.ANY.value,
-        "--family",
-        "-f",
-        help="Accelerator family: 'gpu', 'tpu', or 'any'.",
-    ),
-    sort_by: str = typer.Option(
-        "cost",
-        "--sort-by",
-        "-s",
-        help="Sort recommendations by: 'cost' (default), 'throughput', 'ttft', or 'ntpot'.",
-    ),
-    format_type: str = typer.Option(
-        "table",
-        "--format",
-        "-F",
-        help="Output format: 'table' or 'json'.",
-    ),
-    apply: bool = typer.Option(
-        False,
-        "--apply",
-        "-a",
-        help="Write the top recommended machine type and engine tuning to config/deployment_spec.yaml.",
-    ),
-    list_models: bool = typer.Option(
-        False,
-        "--list-models",
-        help="List all supported models in GKE Recommender and exit.",
-    ),
+    model: Optional[str] = None,
+    target_cost_per_million_input_tokens: Optional[float] = None,
+    target_cost_per_million_output_tokens: Optional[float] = None,
+    output_input_cost_ratio: Optional[float] = None,
+    target_ttft_milliseconds: Optional[int] = None,
+    target_ntpot_milliseconds: Optional[int] = None,
+    use_case: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    pricing_model: str = DEFAULT_PRICING_MODEL,
+    model_server: Optional[str] = None,
+    model_server_version: Optional[str] = None,
+    family: str = AcceleratorFamily.ANY.value,
+    sort_by: str = "cost",
+    format_type: str = "table",
+    apply: bool = False,
+    list_models: bool = False,
 ) -> None:
     """Recommends hardware configurations and engine parameters using GKE Recommender."""
+    # Validate custom input/output token options first
+    if (input_tokens is not None and output_tokens is None) or (
+        input_tokens is None and output_tokens is not None
+    ):
+        console.print(
+            "[bold red]❌ Both --input-tokens (-I) and --output-tokens (-O) must be provided together for custom distribution.[/bold red]"
+        )
+        raise click.exceptions.Exit(1)
+    if input_tokens is not None and input_tokens <= 0:
+        console.print(
+            "[bold red]❌ --input-tokens must be a positive integer.[/bold red]"
+        )
+        raise click.exceptions.Exit(1)
+    if output_tokens is not None and output_tokens <= 0:
+        console.print(
+            "[bold red]❌ --output-tokens must be a positive integer.[/bold red]"
+        )
+        raise click.exceptions.Exit(1)
+
     if not ensure_authenticated(interactive=True):
-        raise typer.Exit(1)
+        raise click.exceptions.Exit(1)
 
     if list_models:
         try:
             supported = fetch_supported_models()
         except Exception as err:
             if is_auth_error(err):
-                if ensure_authenticated(interactive=True):
-                    try:
-                        supported = fetch_supported_models()
-                    except Exception as retry_err:
-                        console.print(f"[bold red]❌ Failed to fetch supported models: {retry_err}[/bold red]")
-                        raise typer.Exit(1)
-                else:
-                    raise typer.Exit(1)
-            else:
-                console.print(f"[bold red]❌ Failed to fetch supported models: {err}[/bold red]")
-                raise typer.Exit(1)
+                console.print(
+                    "\n[bold red]❌ Google Cloud authentication required.[/bold red]\n"
+                    "[yellow]Please run the following command to authenticate:[/yellow]\n"
+                    "  • [cyan]gcloud auth application-default login[/cyan]\n"
+                )
+                raise click.exceptions.Exit(1)
+            console.print(
+                f"[bold red]❌ Failed to fetch supported models: {err}[/bold red]"
+            )
+            raise click.exceptions.Exit(1)
 
         console.print(
             f"\n[bold cyan]Supported models in GKE Recommender ({len(supported)} models):[/bold cyan]\n"
@@ -195,6 +260,8 @@ def recommend(
             target_ttft_milliseconds=target_ttft_milliseconds,
             target_ntpot_milliseconds=target_ntpot_milliseconds,
             use_case=use_case,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             family=fam_enum,
             sort_by=sort_by,
         )
@@ -202,7 +269,7 @@ def recommend(
         console.print(
             f"\n[bold red]❌ Permission denied accessing GKE Recommender service: {err}[/bold red]\n"
         )
-        raise typer.Exit(1)
+        raise click.exceptions.Exit(1)
     except ModelNotSupportedError as err:
         console.print(
             f"\n[bold red]❌ Model '{err.model_id}' is not supported by the Google Cloud GKE Recommender service.[/bold red]\n"
@@ -216,39 +283,27 @@ def recommend(
                     f"  [dim]... and {len(err.supported_models) - 8} more. Run 'models-cli recommend --list-models' to view all.[/dim]"
                 )
         console.print()
-        raise typer.Exit(1)
+        raise click.exceptions.Exit(1)
     except Exception as err:
         if is_auth_error(err):
-            if ensure_authenticated(interactive=True):
-                try:
-                    recs = get_recommendations(
-                        model_id=target_model,
-                        model_server=model_server,
-                        model_server_version=model_server_version,
-                        target_cost_per_million_input_tokens=target_cost_per_million_input_tokens,
-                        target_cost_per_million_output_tokens=target_cost_per_million_output_tokens,
-                        output_input_cost_ratio=output_input_cost_ratio,
-                        pricing_model=pricing_model,
-                        target_ttft_milliseconds=target_ttft_milliseconds,
-                        target_ntpot_milliseconds=target_ntpot_milliseconds,
-                        use_case=use_case,
-                        family=fam_enum,
-                        sort_by=sort_by,
-                    )
-                except Exception as retry_err:
-                    console.print(f"[bold red]❌ Error retrieving recommendations: {retry_err}[/bold red]")
-                    raise typer.Exit(1)
-            else:
-                raise typer.Exit(1)
-        else:
-            console.print(f"[bold red]❌ Error retrieving recommendations: {err}[/bold red]")
-            raise typer.Exit(1)
+            console.print(
+                "\n[bold red]❌ Google Cloud authentication required.[/bold red]\n"
+                "[yellow]Please run the following command to authenticate:[/yellow]\n"
+                "  • [cyan]gcloud auth application-default login[/cyan]\n"
+            )
+            raise click.exceptions.Exit(1)
+        console.print(
+            f"[bold red]❌ Error retrieving recommendations: {err}[/bold red]"
+        )
+        raise click.exceptions.Exit(1)
 
     if not recs:
         console.print(
             f"[bold red]❌ No hardware configurations found matching the criteria for '{target_model}'.[/bold red]"
         )
-        raise typer.Exit(1)
+        raise click.exceptions.Exit(1)
+
+    is_custom_dist = input_tokens is not None and output_tokens is not None
 
     if format_type.lower() == "json":
         output_payload = {
@@ -256,6 +311,16 @@ def recommend(
             "sort_by": sort_by.lower(),
             "use_case": use_case,
             "output_input_cost_ratio": output_input_cost_ratio,
+            "custom_distribution": (
+                {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "ratio": _format_distribution_ratio(input_tokens, output_tokens),
+                    "is_interpolated": True,
+                }
+                if is_custom_dist
+                else None
+            ),
             "recommendations": recs,
         }
         print(json.dumps(output_payload, indent=2))
@@ -265,11 +330,26 @@ def recommend(
     console.print(
         f"\n[bold cyan]🚀 Hardware & Engine Recommendations for[/bold cyan] [bold yellow]{target_model}[/bold yellow]"
     )
+
+    if is_custom_dist:
+        ratio_val = _format_distribution_ratio(input_tokens, output_tokens)
+        console.print(
+            Panel.fit(
+                f"[bold yellow]ℹ️  Custom Workload Distribution:[/bold yellow] [bold cyan]{input_tokens:,}[/bold cyan] input tokens / [bold cyan]{output_tokens:,}[/bold cyan] output tokens (Ratio: [bold blue]{ratio_val}[/bold blue])\n"
+                f"[dim]⚠️  Notice: Performance metrics below are [bold yellow]interpolated[/bold yellow] from empirical GKE Recommender benchmarks for this model.[/dim]",
+                border_style="yellow",
+            )
+        )
+
     meta_parts = [f"🎯 Sort By: [bold green]{sort_by.upper()}[/bold green]"]
-    active_pricing = pricing_model or (recs[0].get("pricing_model") if recs else None) or "spot"
+    active_pricing = (
+        pricing_model or (recs[0].get("pricing_model") if recs else None) or "spot"
+    )
     meta_parts.append(f"Pricing: [bold cyan]{active_pricing.upper()}[/bold cyan]")
     if use_case:
         meta_parts.append(f"Workload: [bold magenta]{use_case}[/bold magenta]")
+    if is_custom_dist:
+        meta_parts.append(f"Profile: [bold yellow]INTERPOLATED[/bold yellow]")
     if output_input_cost_ratio is not None:
         meta_parts.append(f"Ratio: [bold blue]{output_input_cost_ratio}:1[/bold blue]")
     if target_cost_per_million_input_tokens is not None:
@@ -282,33 +362,63 @@ def recommend(
     table.add_column("Rank", style="bold yellow", justify="center")
     table.add_column("Machine Type", style="bold cyan")
     table.add_column("Accelerator", style="green")
-    table.add_column("Cost/M In", justify="right", style="bold yellow")
-    table.add_column("Cost/M Out", justify="right", style="bold yellow")
-    table.add_column("TTFT", justify="right")
-    table.add_column("NTPOT", justify="right")
-    table.add_column("Output Tok/s", justify="right")
+    table.add_column(
+        "Cost/M In" if not is_custom_dist else "Cost/M In (Interp)",
+        justify="right",
+        style="bold yellow",
+    )
+    table.add_column(
+        "Cost/M Out" if not is_custom_dist else "Cost/M Out (Interp)",
+        justify="right",
+        style="bold yellow",
+    )
+    table.add_column("TTFT" if not is_custom_dist else "TTFT (Interp)", justify="right")
+    table.add_column(
+        "NTPOT" if not is_custom_dist else "NTPOT (Interp)", justify="right"
+    )
+    table.add_column(
+        "Output Tok/s" if not is_custom_dist else "Output Tok/s (Interp)",
+        justify="right",
+    )
     table.add_column("Server (TP)", justify="center")
-    table.add_column("Use Case", style="dim")
+    table.add_column(
+        "Use Case (In/Out)" if not is_custom_dist else "Profile Status", style="dim"
+    )
 
     for idx, r in enumerate(recs, start=1):
         rank_str = f"#{idx}" if idx > 1 else "⭐ #1"
+        is_interp_row = r.get("is_interpolated", False)
+        prefix = "~" if is_interp_row else ""
         cost_in_str = (
-            f"${r['input_cost_per_m']:.3f}" if r["input_cost_per_m"] is not None else "-"
+            f"{prefix}${r['input_cost_per_m']:.3f}"
+            if r["input_cost_per_m"] is not None
+            else "-"
         )
         cost_out_str = (
-            f"${r['output_cost_per_m']:.3f}" if r["output_cost_per_m"] is not None else "-"
+            f"{prefix}${r['output_cost_per_m']:.3f}"
+            if r["output_cost_per_m"] is not None
+            else "-"
         )
-        ttft_str = f"{r['ttft_ms']} ms" if r["ttft_ms"] is not None else "-"
-        ntpot_str = f"{r['ntpot_ms']} ms" if r["ntpot_ms"] is not None else "-"
+        ttft_str = f"{prefix}{r['ttft_ms']} ms" if r["ttft_ms"] is not None else "-"
+        ntpot_str = f"{prefix}{r['ntpot_ms']} ms" if r["ntpot_ms"] is not None else "-"
         tok_s_str = (
-            f"{r['output_tokens_per_sec']:,}"
+            f"{prefix}{r['output_tokens_per_sec']:,}"
             if r["output_tokens_per_sec"] is not None
             else "-"
         )
         server_tp = (
             f"{r['model_server']} (TP={r['engine_params']['tensor_parallel_size']})"
         )
-        use_case_str = r.get("use_case") or "-"
+        if is_interp_row:
+            use_case_str = "[yellow]interpolated[/yellow]"
+        else:
+            uc_name = r.get("use_case") or "-"
+            in_len = r.get("average_input_length")
+            out_len = r.get("average_output_length")
+            if in_len is not None and out_len is not None:
+                use_case_str = f"{uc_name} ({in_len}/{out_len})"
+            else:
+                use_case_str = uc_name
 
         table.add_row(
             rank_str,
@@ -324,13 +434,19 @@ def recommend(
         )
 
     console.print(table)
+    if is_custom_dist:
+        console.print(
+            "[dim]~ Indicates interpolated metrics calculated for your custom token distribution.[/dim]"
+        )
 
     top = recs[0]
     top_cost_in = (
         f"${top['input_cost_per_m']:.3f}/M in" if top.get("input_cost_per_m") else ""
     )
     top_cost_out = (
-        f"(${top['output_cost_per_m']:.3f}/M out)" if top.get("output_cost_per_m") else ""
+        f"(${top['output_cost_per_m']:.3f}/M out)"
+        if top.get("output_cost_per_m")
+        else ""
     )
     console.print(
         f"\n[bold green]💡 Recommended Machine Type:[/bold green] [bold cyan]{top['machine_type']}[/bold cyan] ({top['chip_name']}) {top_cost_in} {top_cost_out}"
@@ -342,19 +458,46 @@ def recommend(
     # Check if inside a project directory with config/deployment_spec.yaml
     deploy_spec = Path("config/deployment_spec.yaml")
     if deploy_spec.is_file():
-        should_apply = apply
-        if not apply and format_type == "table":
-            should_apply = Confirm.ask(
-                f"\nApply '{top['machine_type']}' to config/deployment_spec.yaml?",
-                default=True,
-            )
-        if should_apply:
-            updated = apply_recommendation(top, Path.cwd())
+        selected_rec = None
+        if apply:
+            selected_rec = top
+        elif format_type == "table":
+            if len(recs) == 1:
+                if Confirm.ask(
+                    f"\nApply '{top['machine_type']}' to config/deployment_spec.yaml?",
+                    default=True,
+                ):
+                    selected_rec = top
+            else:
+                max_rank = len(recs)
+                choice = Prompt.ask(
+                    f"\nSelect a recommendation to apply to config/deployment_spec.yaml (1-{max_rank}, [bold]y[/bold]=#1, [bold]n[/bold]=cancel)",
+                    default="1",
+                ).strip().lower()
+
+                if choice in ("y", "yes", "1"):
+                    selected_rec = recs[0]
+                elif choice in ("n", "no"):
+                    selected_rec = None
+                elif choice.isdigit():
+                    num = int(choice)
+                    if 1 <= num <= max_rank:
+                        selected_rec = recs[num - 1]
+                    else:
+                        console.print(f"[yellow]Invalid selection '{choice}'. Skipping configuration update.[/yellow]\n")
+                else:
+                    console.print(f"[yellow]Invalid selection '{choice}'. Skipping configuration update.[/yellow]\n")
+
+        if selected_rec:
+            updated = apply_recommendation(selected_rec, Path.cwd())
             if updated:
                 console.print(
-                    f"[bold green]✅ Updated config/deployment_spec.yaml with machine type '{top['machine_type']}'.[/bold green]\n"
+                    f"[bold green]✅ Updated config/deployment_spec.yaml with machine type '{selected_rec['machine_type']}'.[/bold green]\n"
                 )
     else:
         console.print(
             "[dim]Run inside your project workspace or pass --apply to update config/deployment_spec.yaml[/dim]\n"
         )
+
+
+recommend_cmd = recommend

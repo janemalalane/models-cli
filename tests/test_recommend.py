@@ -15,7 +15,7 @@
 from unittest.mock import MagicMock
 import pytest
 import yaml
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from google.models.cli.recommend.cmd_recommend import recommend_cmd
 from google.models.cli.recommend.recommend_utils import (
@@ -202,7 +202,7 @@ def test_apply_recommendation(tmp_path):
     cfg_dir = tmp_path / "config"
     cfg_dir.mkdir(parents=True)
     deploy_file = cfg_dir / "deployment_spec.yaml"
-    deploy_file.write_text("deployment:\n  machine_type: null\n")
+    deploy_file.write_text("machine_type: null\n")
 
     engine_file = cfg_dir / "engine_config.yaml"
     engine_file.write_text("engine: vllm\ntensor_parallel_size: 1\n")
@@ -219,9 +219,9 @@ def test_apply_recommendation(tmp_path):
 
     with open(deploy_file, "r") as f:
         deploy_data = yaml.safe_load(f)
-    assert deploy_data["deployment"]["machine_type"] == "g2-standard-12"
-    assert deploy_data["deployment"]["accelerator_type"] == "nvidia-l4"
-    assert deploy_data["deployment"]["accelerator_count"] == 1
+    assert deploy_data["machine_type"] == "g2-standard-12"
+    assert deploy_data["accelerator_type"] == "nvidia-l4"
+    assert deploy_data["accelerator_count"] == 1
 
 
 def test_cli_list_models(monkeypatch):
@@ -377,6 +377,155 @@ def test_cli_recommend_default_pricing_model_on_demand(monkeypatch):
     assert result.exit_code == 0
     assert "Pricing: ON-DEMAND" in result.output
     assert mock_get_recs.call_args[1]["pricing_model"] == "on-demand"
+
+
+def test_cli_recommend_select_specific_rank(tmp_path, monkeypatch):
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True)
+    deploy_file = cfg_dir / "deployment_spec.yaml"
+    deploy_file.write_text("machine_type: null\n")
+
+    recs = [
+        {
+            "machine_type": "a4-highgpu-8g",
+            "accelerator_type": "nvidia-b200",
+            "accelerator_count": 8,
+            "chip_name": "nvidia-b200 (8x)",
+            "family": "gpu",
+            "input_cost_per_m": None,
+            "output_cost_per_m": None,
+            "ttft_ms": 68,
+            "ntpot_ms": 10,
+            "output_tokens_per_sec": 127,
+            "model_server": "vllm",
+            "engine_params": {"tensor_parallel_size": 8},
+        },
+        {
+            "machine_type": "a3-ultragpu-8g",
+            "accelerator_type": "nvidia-h200-141gb",
+            "accelerator_count": 8,
+            "chip_name": "nvidia-h200-141gb (8x)",
+            "family": "gpu",
+            "input_cost_per_m": None,
+            "output_cost_per_m": None,
+            "ttft_ms": 56,
+            "ntpot_ms": 10,
+            "output_tokens_per_sec": 128,
+            "model_server": "vllm",
+            "engine_params": {"tensor_parallel_size": 8},
+        },
+    ]
+
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.get_recommendations",
+        lambda **kwargs: recs,
+    )
+
+    # User inputs '2' to select the second recommendation
+    result = runner.invoke(recommend_cmd, ["--model", "moonshotai/Kimi-K2.5"], input="2\n")
+    assert result.exit_code == 0
+    assert "Updated config/deployment_spec.yaml with machine type 'a3-ultragpu-8g'" in result.output
+
+    with open(deploy_file, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["machine_type"] == "a3-ultragpu-8g"
+
+
+def test_cli_recommend_select_top_default(tmp_path, monkeypatch):
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True)
+    deploy_file = cfg_dir / "deployment_spec.yaml"
+    deploy_file.write_text("machine_type: null\n")
+
+    recs = [
+        {
+            "machine_type": "a4-highgpu-8g",
+            "accelerator_type": "nvidia-b200",
+            "accelerator_count": 8,
+            "chip_name": "nvidia-b200 (8x)",
+            "family": "gpu",
+            "input_cost_per_m": None,
+            "output_cost_per_m": None,
+            "ttft_ms": 68,
+            "ntpot_ms": 10,
+            "output_tokens_per_sec": 127,
+            "model_server": "vllm",
+            "engine_params": {"tensor_parallel_size": 8},
+        },
+        {
+            "machine_type": "a3-ultragpu-8g",
+            "accelerator_type": "nvidia-h200-141gb",
+            "accelerator_count": 8,
+            "chip_name": "nvidia-h200-141gb (8x)",
+            "family": "gpu",
+            "input_cost_per_m": None,
+            "output_cost_per_m": None,
+            "ttft_ms": 56,
+            "ntpot_ms": 10,
+            "output_tokens_per_sec": 128,
+            "model_server": "vllm",
+            "engine_params": {"tensor_parallel_size": 8},
+        },
+    ]
+
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.get_recommendations",
+        lambda **kwargs: recs,
+    )
+
+    # User inputs 'y' to accept the top recommendation
+    result = runner.invoke(recommend_cmd, ["--model", "moonshotai/Kimi-K2.5"], input="y\n")
+    assert result.exit_code == 0
+    assert "Updated config/deployment_spec.yaml with machine type 'a4-highgpu-8g'" in result.output
+
+    with open(deploy_file, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["machine_type"] == "a4-highgpu-8g"
+
+
+def test_cli_recommend_displays_token_lengths_in_use_case(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.get_recommendations",
+        lambda **kwargs: [{
+            "machine_type": "a4-highgpu-8g",
+            "accelerator_type": "nvidia-b200",
+            "accelerator_count": 8,
+            "chip_name": "nvidia-b200 (8x)",
+            "family": "gpu",
+            "input_cost_per_m": None,
+            "output_cost_per_m": None,
+            "ttft_ms": 68,
+            "ntpot_ms": 10,
+            "output_tokens_per_sec": 127,
+            "model_server": "vllm",
+            "engine_params": {"tensor_parallel_size": 8},
+            "use_case": "Chatbot (ShareGPT)",
+            "average_input_length": 128,
+            "average_output_length": 128,
+        }],
+    )
+
+    result = runner.invoke(recommend_cmd, ["--model", "moonshotai/Kimi-K2.5"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0
+    assert "Chatbot (ShareGPT) (128/128)" in result.output
+    assert "Use Case (In/Out)" in result.output
 
 
 

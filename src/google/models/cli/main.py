@@ -14,82 +14,57 @@
 
 """Main entry point for models-cli."""
 
+import io
 import sys
-from typing import Optional
-import typer
+import traceback
+
+import click
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from google.models.cli import __version__
+from google.models.cli._click import LazyGroup, patch_source_in_help
 from google.models.cli._gcp_project import get_active_gcp_account, resolve_gcp_project
-from google.models.cli.benchmark.cmd_benchmark import benchmark
 from google.models.cli.common.auth import is_authenticated
 from google.models.cli.common.constants import DEFAULT_MODEL_REPO, DEFAULT_REGION
-from google.models.cli.deploy.cmd_deploy import deploy
-from google.models.cli.eval.cmd_eval import eval as eval_fn
-from google.models.cli.recommend.cmd_recommend import recommend
-from google.models.cli.scaffold.cmd_scaffold import create_project
+
+# Force utf-8 encoding and non-exception fallback for printing
+if isinstance(sys.stdout, io.TextIOWrapper):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if isinstance(sys.stderr, io.TextIOWrapper):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 console = Console()
 
-app = typer.Typer(
-    name="models-cli",
-    help="Lifecycle CLI for evaluating, optimizing, deploying, and benchmarking open-weights models on Google Cloud (GEAP / Vertex AI).",
-    no_args_is_help=True,
-    add_completion=False,
-)
 
-# Register subcommands directly as Typer commands
-app.command(
-    name="create",
-    help="Scaffold a new open-weights model serving & benchmarking workspace",
-)(create_project)
-app.command(name="init", hidden=True)(create_project)
-app.command(name="scaffold", hidden=True)(create_project)
+class _MainGroup(LazyGroup):
+    """Click group with lazy command loading and full-traceback exception handling."""
 
-app.command(
-    name="eval", help="Evaluate model response accuracy and quality on golden datasets"
-)(eval_fn)
-app.command(name="evaluate", hidden=True)(eval_fn)
-app.command(
-    name="recommend",
-    help="Hardware & engine parameter recommendations from Google Cloud GKE Recommender",
-)(recommend)
-app.command(
-    name="deploy",
-    help="Deploy open model container to GEAP / Vertex AI online prediction endpoint",
-)(deploy)
-app.command(
-    name="benchmark",
-    help="Run performance & load testing with inference-perf and generate analysis reports",
-)(benchmark)
+    def invoke(self, ctx: click.Context) -> None:
+        try:
+            super().invoke(ctx)
+        except click.exceptions.Exit:
+            raise
+        except click.ClickException:
+            click.echo(f"models-cli v{__version__}", err=True)
+            raise
+        except KeyboardInterrupt:
+            Console().print(f"\nmodels-cli v{__version__}", style="dim")
+            Console().print("Operation cancelled by user", style="yellow")
+            ctx.exit(130)
+        except Exception:  # noqa: BLE001
+            click.echo(f"models-cli v{__version__}", err=True)
+            traceback.print_exc()
+            ctx.exit(1)
 
 
-def version_callback(value: bool) -> None:
-    if value:
-        console.print(
-            f"[bold cyan]models-cli[/bold cyan] version [bold green]{__version__}[/bold green]"
-        )
-        raise typer.Exit()
+@click.group(cls=_MainGroup, no_args_is_help=True)
+@click.version_option(version=__version__, prog_name="models-cli")
+def main() -> None:
+    """Lifecycle CLI for evaluating, optimizing, deploying, and benchmarking open-weights models on Google Cloud (GEAP / Vertex AI)."""
 
 
-@app.callback()
-def main(
-    version: Optional[bool] = typer.Option(
-        None,
-        "--version",
-        "-v",
-        help="Show models-cli version and exit.",
-        callback=version_callback,
-        is_eager=True,
-    ),
-) -> None:
-    """models-cli: Turn any developer into an expert at open model inference and deployment on Google Cloud."""
-    pass
-
-
-@app.command(name="info")
+@main.command(name="info")
 def info() -> None:
     """Displays current environment diagnostics and active GCP configuration."""
     from google.models.cli.common.config import settings
@@ -127,5 +102,60 @@ def info() -> None:
     console.print(table)
 
 
+# Subcommands registered lazily
+main.add_lazy_command(
+    "create",
+    "google.models.cli.scaffold.cmd_scaffold:create_project",
+    "Scaffold a new open-weights model serving & benchmarking workspace",
+)
+main.add_lazy_command(
+    "init",
+    "google.models.cli.scaffold.cmd_scaffold:create_project",
+    "Scaffold a new open-weights model serving & benchmarking workspace",
+    hidden=True,
+)
+main.add_lazy_command(
+    "scaffold",
+    "google.models.cli.scaffold.cmd_scaffold:create_project",
+    "Scaffold a new open-weights model serving & benchmarking workspace",
+    hidden=True,
+)
+main.add_lazy_command(
+    "eval",
+    "google.models.cli.eval.cmd_eval:eval",
+    "Evaluate model response accuracy and quality on golden datasets",
+)
+main.add_lazy_command(
+    "evaluate",
+    "google.models.cli.eval.cmd_eval:eval",
+    "Evaluate model response accuracy and quality on golden datasets",
+    hidden=True,
+)
+main.add_lazy_command(
+    "recommend",
+    "google.models.cli.recommend.cmd_recommend:recommend",
+    "Hardware & engine parameter recommendations from Google Cloud GKE Recommender",
+)
+main.add_lazy_command(
+    "deploy",
+    "google.models.cli.deploy.cmd_deploy:deploy",
+    "Deploy open model container to GEAP / Vertex AI online prediction endpoint",
+)
+main.add_lazy_command(
+    "benchmark",
+    "google.models.cli.benchmark.cmd_benchmark:benchmark",
+    "Run performance & load testing with inference-perf and generate analysis reports",
+)
+main.add_lazy_command(
+    "playground",
+    "google.models.cli.playground.cmd_playground:playground",
+    "Interactive chat playground for deployed endpoints using Chat Completions API",
+)
+
+patch_source_in_help(main)
+
+# Alias app for backwards-compatibility
+app = main
+
 if __name__ == "__main__":
-    app()
+    main()

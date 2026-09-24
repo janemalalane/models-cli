@@ -1,14 +1,13 @@
 # Vertex AI / GEAP Online Prediction Endpoint Specification
 # Run `models-cli recommend` to select and apply the optimal machine type for your objective.
-deployment:
-  display_name: "{project_name}-endpoint"
-  engine: "sglang"
-  machine_type: null
-  accelerator_type: null
-  accelerator_count: null
-  container_image_uri: "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-sglang-serve:latest"
-  dedicated_endpoint: true
-  routes:
-    predict: "/*"
-    health: "/health"
-  shared_memory_mb: 65536
+display_name: "{project_name}-endpoint"
+engine: "sglang"
+machine_type: null
+accelerator_type: null
+accelerator_count: null
+service_account: null
+dedicated_endpoint: true
+shared_memory_mb: 65536
+routes:
+  predict: "/*"
+  health: "/health"

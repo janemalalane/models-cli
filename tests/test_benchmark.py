@@ -1,7 +1,7 @@
 # Copyright 2026 Google LLC
-from pathlib import Path
-from typer.testing import CliRunner
 import yaml
+from click.testing import CliRunner
+
 from google.models.cli.benchmark.benchmark_utils import (
     generate_benchmark_config,
     generate_markdown_report,
@@ -60,6 +60,7 @@ def test_benchmark_command_mock(tmp_path):
 
 def test_find_inference_perf_command_alongside_python(tmp_path, monkeypatch):
     import sys
+
     from google.models.cli.benchmark.benchmark_utils import find_inference_perf_command
 
     fake_bin = tmp_path / "inference-perf"
@@ -76,6 +77,7 @@ def test_find_inference_perf_command_alongside_python(tmp_path, monkeypatch):
 
 def test_find_inference_perf_command_in_path(tmp_path, monkeypatch):
     import sys
+
     from google.models.cli.benchmark.benchmark_utils import find_inference_perf_command
 
     # Python dir has no inference-perf
@@ -113,3 +115,42 @@ def test_benchmark_live_missing_binary_fails(monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert "inference-perf is required to benchmark a live endpoint" in result.output
 
+
+def test_benchmark_live_passes_server_api_key(monkeypatch, tmp_path):
+    """Verify that --server.api_key is passed to inference-perf with the token."""
+    captured_cmd = []
+
+    def fake_run(cmd, check=True):
+        captured_cmd.extend(cmd)
+
+    monkeypatch.setattr(
+        "google.models.cli.benchmark.cmd_benchmark.find_inference_perf_command",
+        lambda: ["inference-perf"],
+    )
+    monkeypatch.setattr(
+        "google.models.cli.benchmark.cmd_benchmark.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "google.models.cli.benchmark.cmd_benchmark.get_gcp_access_token",
+        lambda: "Bearer secret-token-123",
+    )
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "--model",
+            "google/gemma-4-31B-it",
+            "--endpoint",
+            "https://my-remote-endpoint.prediction.vertexai.goog",
+            "--output-dir",
+            str(tmp_path / "live-bench"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "--server.api_key" in captured_cmd
+    idx = captured_cmd.index("--server.api_key")
+    assert captured_cmd[idx + 1] == "secret-token-123"
+    assert "--server.http_headers.Authorization" not in captured_cmd

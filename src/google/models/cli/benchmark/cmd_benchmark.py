@@ -20,7 +20,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-import typer
+import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -37,43 +37,45 @@ from google.models.cli.common.config import settings
 from google.models.cli.common.constants import DEFAULT_MODEL_REPO
 
 console = Console()
-benchmark_cmd = typer.Typer(
-    name="benchmark",
-    help="Run performance & load testing with inference-perf and generate analysis reports",
+
+
+@click.command("benchmark")
+@click.option(
+    "--endpoint",
+    "-e",
+    default=None,
+    help="Target model serving endpoint base URL.",
 )
-
-
-@benchmark_cmd.callback(invoke_without_command=True)
+@click.option(
+    "--config",
+    "-c",
+    default=None,
+    help="Path to inference-perf config YAML file.",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Model name identifier.",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default=None,
+    help="Directory to save benchmark metrics and reports.",
+)
+@click.option(
+    "--mock",
+    is_flag=True,
+    default=False,
+    help="Run against inference-perf mock server without requiring a live cloud endpoint.",
+)
 def benchmark(
-    endpoint: Optional[str] = typer.Option(
-        None,
-        "--endpoint",
-        "-e",
-        help="Target model serving endpoint base URL.",
-    ),
-    config: Optional[str] = typer.Option(
-        None,
-        "--config",
-        "-c",
-        help="Path to inference-perf config YAML file.",
-    ),
-    model: Optional[str] = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Model name identifier.",
-    ),
-    output_dir: Optional[str] = typer.Option(
-        None,
-        "--output-dir",
-        "-o",
-        help="Directory to save benchmark metrics and reports.",
-    ),
-    mock: bool = typer.Option(
-        False,
-        "--mock",
-        help="Run against inference-perf mock server without requiring a live cloud endpoint.",
-    ),
+    endpoint: Optional[str] = None,
+    config: Optional[str] = None,
+    model: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    mock: bool = False,
 ) -> None:
     """Runs performance benchmarks with inference-perf and outputs comparison metrics."""
     target_model = model or settings.model_id or DEFAULT_MODEL_REPO
@@ -92,7 +94,7 @@ def benchmark(
         )
     ):
         if not ensure_authenticated(interactive=True):
-            raise typer.Exit(1)
+            raise click.exceptions.Exit(1)
         fetched_token = get_gcp_access_token()
         if fetched_token:
             auth_token = fetched_token
@@ -142,12 +144,12 @@ def benchmark(
         ]
         # Pass auth token via CLI flag at runtime to avoid storing secrets in YAML files
         if auth_token:
-            bearer_hdr = (
-                auth_token
+            raw_token = (
+                auth_token[7:].strip()
                 if auth_token.startswith("Bearer ")
-                else f"Bearer {auth_token}"
+                else auth_token
             )
-            cmd.extend(["--server.http_headers.Authorization", bearer_hdr])
+            cmd.extend(["--server.api_key", raw_token])
 
         # Redact token for safe console logging
         display_cmd = []
@@ -156,7 +158,7 @@ def benchmark(
             if skip_next:
                 display_cmd.append("[REDACTED_AUTH_TOKEN]")
                 skip_next = False
-            elif arg == "--server.http_headers.Authorization":
+            elif arg == "--server.api_key":
                 display_cmd.append(arg)
                 skip_next = True
             else:
@@ -181,7 +183,7 @@ def benchmark(
             console.print(
                 "Please install dependencies with: [cyan]pip install google-models-cli[/cyan] or [cyan]pip install inference-perf[/cyan]"
             )
-            raise typer.Exit(1)
+            raise click.exceptions.Exit(1)
 
     metrics = parse_lifecycle_metrics(out_path)
     report_file = generate_markdown_report(out_path, target_model, metrics)
@@ -217,3 +219,6 @@ def benchmark(
     console.print(
         f"\n[bold green]✅ Benchmark Completed![/bold green] Detailed report generated at: [cyan]{report_file}[/cyan]\n"
     )
+
+
+benchmark_cmd = benchmark

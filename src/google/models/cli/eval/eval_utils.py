@@ -26,11 +26,18 @@ def load_golden_dataset(dataset_path: Path) -> list[dict[str, Any]]:
         # Fallback sample dataset if file not found
         return [
             {
-                "messages": [{"role": "user", "content": "Explain Trillium TPU architecture."}],
+                "messages": [
+                    {"role": "user", "content": "Explain Trillium TPU architecture."}
+                ],
                 "expected_output": "Google Trillium TPU v6e is designed for high efficiency LLM inference.",
             },
             {
-                "messages": [{"role": "user", "content": "Write a Python function for binary search."}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Write a Python function for binary search.",
+                    }
+                ],
                 "expected_output": "def binary_search(arr, target): ...",
             },
         ]
@@ -65,7 +72,7 @@ def evaluate_candidate_models(
             continue
 
         # Model evaluation score calculation (simulated/mock or via API)
-        if "31b" in clean_name.lower():
+        if "31b" in clean_name.lower() or "32b" in clean_name.lower():
             accuracy_score = 0.94
             quality_score = 0.92
             avg_latency_ms = 125.0
@@ -77,7 +84,11 @@ def evaluate_candidate_models(
             accuracy_score = 0.96
             quality_score = 0.95
             avg_latency_ms = 240.0
-        elif "9b" in clean_name.lower() or "8b" in clean_name.lower() or "7b" in clean_name.lower():
+        elif (
+            "9b" in clean_name.lower()
+            or "8b" in clean_name.lower()
+            or "7b" in clean_name.lower()
+        ):
             accuracy_score = 0.86
             quality_score = 0.84
             avg_latency_ms = 65.0
@@ -135,7 +146,9 @@ def update_project_with_winner(winning_model: str, project_dir: Path) -> bool:
             env_file.write_text(new_content, encoding="utf-8")
             updated = True
         else:
-            env_file.write_text(content + f'\nMODEL_ID="{winning_model}"\n', encoding="utf-8")
+            env_file.write_text(
+                content + f'\nMODEL_ID="{winning_model}"\n', encoding="utf-8"
+            )
             updated = True
 
     return updated

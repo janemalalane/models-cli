@@ -1,6 +1,6 @@
 # Copyright 2026 Google LLC
 from pathlib import Path
-from typer.testing import CliRunner
+from click.testing import CliRunner
 from google.models.cli.eval.eval_utils import (
     evaluate_candidate_models,
     load_golden_dataset,

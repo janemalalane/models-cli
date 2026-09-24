@@ -1,6 +1,6 @@
 # Copyright 2026 Google LLC
 from pathlib import Path
-from typer.testing import CliRunner
+from click.testing import CliRunner
 from google.models.cli.main import app
 from google.models.cli.scaffold.scaffold_utils import (
     copy_and_render_templates,

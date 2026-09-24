@@ -16,7 +16,7 @@
 
 from pathlib import Path
 from typing import Optional
-import typer
+import click
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -33,67 +33,72 @@ from google.models.cli.scaffold.scaffold_utils import (
 )
 
 console = Console()
-scaffold_cmd = typer.Typer(
-    name="create",
-    help="Scaffold a new open-weights model serving & benchmarking workspace",
+
+
+@click.command("create")
+@click.argument("project_name", required=False, default=None)
+@click.option(
+    "--template",
+    "-t",
+    default=DEFAULT_ENGINE,
+    help="Serving engine template: 'vllm' or 'sglang'.",
 )
-
-
-@scaffold_cmd.callback(invoke_without_command=True)
+@click.option(
+    "--model",
+    "-m",
+    default=DEFAULT_MODEL_REPO,
+    help="Target Hugging Face model repository.",
+)
+@click.option(
+    "--region",
+    "-r",
+    default=DEFAULT_REGION,
+    help="GCP region for deployment (e.g. us-central1, us-east1).",
+)
+@click.option(
+    "--project",
+    "-p",
+    default=None,
+    help="GCP project ID. Defaults to active gcloud / ADC project.",
+)
+@click.option(
+    "--interactive",
+    "-i",
+    is_flag=True,
+    default=False,
+    help="Enable interactive prompts.",
+)
+@click.option(
+    "--auto-approve",
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip interactive prompts and use defaults.",
+)
+@click.option(
+    "--skip-checks",
+    "-s",
+    is_flag=True,
+    default=False,
+    help="Skip GCP and Vertex AI verification checks.",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default=None,
+    help="Parent directory where the project directory will be created.",
+)
 def create_project(
-    project_name: Optional[str] = typer.Argument(
-        None,
-        help="Name of the project directory to create.",
-    ),
-    template: str = typer.Option(
-        DEFAULT_ENGINE.value,
-        "--template",
-        "-t",
-        help="Serving engine template: 'vllm' or 'sglang'.",
-    ),
-    model: str = typer.Option(
-        DEFAULT_MODEL_REPO,
-        "--model",
-        "-m",
-        help="Target Hugging Face model repository.",
-    ),
-    region: str = typer.Option(
-        DEFAULT_REGION,
-        "--region",
-        "-r",
-        help="GCP region for deployment (e.g. us-central1, us-east1).",
-    ),
-    project: Optional[str] = typer.Option(
-        None,
-        "--project",
-        "-p",
-        help="GCP project ID. Defaults to active gcloud / ADC project.",
-    ),
-    interactive: bool = typer.Option(
-        False,
-        "--interactive",
-        "-i",
-        help="Enable interactive prompts.",
-    ),
-    auto_approve: bool = typer.Option(
-        False,
-        "--auto-approve",
-        "--yes",
-        "-y",
-        help="Skip interactive prompts and use defaults.",
-    ),
-    skip_checks: bool = typer.Option(
-        False,
-        "--skip-checks",
-        "-s",
-        help="Skip GCP and Vertex AI verification checks.",
-    ),
-    output_dir: Optional[str] = typer.Option(
-        None,
-        "--output-dir",
-        "-o",
-        help="Parent directory where the project directory will be created.",
-    ),
+    project_name: Optional[str] = None,
+    template: str = DEFAULT_ENGINE,
+    model: str = DEFAULT_MODEL_REPO,
+    region: str = DEFAULT_REGION,
+    project: Optional[str] = None,
+    interactive: bool = False,
+    auto_approve: bool = False,
+    skip_checks: bool = False,
+    output_dir: Optional[str] = None,
 ) -> None:
     """Creates an open model serving, deployment, and benchmarking project workspace."""
     is_interactive = interactive or (not auto_approve and project_name is None)
@@ -116,7 +121,7 @@ def create_project(
         console.print(
             f"[bold red]❌ Error:[/bold red] Target directory '{project_dir}' already exists and is not empty."
         )
-        raise typer.Exit(1)
+        raise click.exceptions.Exit(1)
 
     # 2. Model Repo
     if is_interactive and not auto_approve:
@@ -129,7 +134,7 @@ def create_project(
     if is_interactive and not auto_approve:
         template = Prompt.ask(
             "> ⚡ Select inference engine [vllm / sglang]",
-            default=template or DEFAULT_ENGINE.value,
+            default=template or DEFAULT_ENGINE,
         )
     engine_val = template.lower().strip()
     if engine_val not in ("vllm", "sglang"):
@@ -157,7 +162,7 @@ def create_project(
         resolved_project = default_project
     # 6. Context variables & Template rendering
     gcs_bucket = f"{resolved_project}-models" if resolved_project != "YOUR_GCP_PROJECT_ID" else "your-gcs-bucket"
-    sa_email = f"models-sa@{resolved_project}.iam.gserviceaccount.com" if resolved_project != "YOUR_GCP_PROJECT_ID" else "your-sa@project.iam.gserviceaccount.com"
+    sa_email = ""
 
     context = {
         "project_name": project_name,
@@ -187,3 +192,6 @@ def create_project(
     console.print(f"   cd {project_name}")
     console.print(f"   models-cli recommend --model {model}")
     console.print("   models-cli deploy --dry-run\n")
+
+
+scaffold_cmd = create_project

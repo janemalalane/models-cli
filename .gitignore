@@ -52,6 +52,7 @@ coverage.xml
 reports-*/
 tmp/
 *.log
+deployment_metadata.json
 
 # IDE & OS files
 .DS_Store
