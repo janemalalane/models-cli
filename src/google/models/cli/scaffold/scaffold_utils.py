@@ -35,7 +35,7 @@ def normalize_project_name(name: str) -> str:
 
 
 def verify_credentials_and_vertex(project_id: str, location: str) -> Tuple[bool, str]:
-    """Verifies Google Cloud credentials and Vertex AI / Agent Platform initialization.
+    """Verifies Google Cloud credentials and Gemini Enterprise Online Prediction initialization.
 
     Args:
         project_id: Google Cloud Project ID.
@@ -47,7 +47,7 @@ def verify_credentials_and_vertex(project_id: str, location: str) -> Tuple[bool,
     try:
         aiplatform.init(project=project_id, location=location)
         # Attempt lightweight API check
-        return True, f"Successfully connected to Vertex AI / Agent Platform in '{project_id}' ({location})."
+        return True, f"Successfully connected to Gemini Enterprise Online Prediction in '{project_id}' ({location})."
     except Exception as e:
         return False, str(e)
 
@@ -66,6 +66,9 @@ def generate_env_from_example(env_example_path: Path, context: dict[str, str]) -
         "GOOGLE_CLOUD_PROJECT": context.get("project_id", ""),
         "GOOGLE_CLOUD_LOCATION": context.get("region", ""),
         "GOOGLE_CLOUD_STORAGE_BUCKET": context.get("gcs_bucket", ""),
+        "GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH": context.get("base_path", ""),
+        "BASE_PATH": context.get("base_path", ""),
+        "ARTIFACT_BASE_PATH": context.get("base_path", ""),
         "SERVICE_ACCOUNT_EMAIL": context.get("service_account_email", ""),
         "MODEL_ID": context.get("model_id", ""),
         "HF_TOKEN": context.get("hf_token", ""),

@@ -36,6 +36,13 @@ class LazyGroup(click.Group):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._lazy_commands: dict[str, tuple[str, str, bool]] = {}
+        self._command_order: list[str] = []
+
+    def add_command(self, cmd: click.Command, name: str | None = None) -> None:
+        cmd_name = name or cmd.name
+        if cmd_name and cmd_name not in self._command_order:
+            self._command_order.append(cmd_name)
+        super().add_command(cmd, name)
 
     def add_lazy_command(
         self,
@@ -45,9 +52,14 @@ class LazyGroup(click.Group):
         hidden: bool = False,
     ) -> None:
         self._lazy_commands[name] = (import_path, short_help, hidden)
+        if name not in self._command_order:
+            self._command_order.append(name)
 
     def list_commands(self, ctx: click.Context) -> list[str]:
-        return sorted(set(super().list_commands(ctx)) | set(self._lazy_commands))
+        all_commands = set(super().list_commands(ctx)) | set(self._lazy_commands)
+        ordered = [name for name in self._command_order if name in all_commands]
+        remaining = [name for name in all_commands if name not in self._command_order]
+        return ordered + remaining
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         if cmd_name in self._lazy_commands and cmd_name not in self.commands:

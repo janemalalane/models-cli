@@ -59,7 +59,35 @@ console = Console()
     "--project",
     "-p",
     default=None,
-    help="GCP project ID. Defaults to active gcloud / ADC project.",
+    help="GCP project ID (GOOGLE_CLOUD_PROJECT). Defaults to active gcloud / ADC project.",
+)
+@click.option(
+    "--bucket",
+    "-b",
+    default=None,
+    help="GCS bucket name for model artifacts (GOOGLE_CLOUD_STORAGE_BUCKET).",
+)
+@click.option(
+    "--base-path",
+    "--artifact-base-path",
+    default=None,
+    help="Base path or prefix inside GCS bucket for model artifacts (GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH).",
+)
+@click.option(
+    "--service-account",
+    "--service-account-email",
+    default=None,
+    help="GCP Service Account email (SERVICE_ACCOUNT_EMAIL).",
+)
+@click.option(
+    "--hf-token",
+    default=None,
+    help="Hugging Face access token (HF_TOKEN).",
+)
+@click.option(
+    "--endpoint-url",
+    default=None,
+    help="Deployed endpoint URL (ENDPOINT_URL).",
 )
 @click.option(
     "--interactive",
@@ -81,7 +109,7 @@ console = Console()
     "-s",
     is_flag=True,
     default=False,
-    help="Skip GCP and Vertex AI verification checks.",
+    help="Skip GCP and Gemini Enterprise verification checks.",
 )
 @click.option(
     "--output-dir",
@@ -95,6 +123,11 @@ def create_project(
     model: str = DEFAULT_MODEL_REPO,
     region: str = DEFAULT_REGION,
     project: Optional[str] = None,
+    bucket: Optional[str] = None,
+    base_path: Optional[str] = None,
+    service_account: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
     interactive: bool = False,
     auto_approve: bool = False,
     skip_checks: bool = False,
@@ -107,7 +140,7 @@ def create_project(
     if not project_name:
         if is_interactive:
             project_name = Prompt.ask(
-                "\n> Enter project name",
+                "\n> What is your project name?",
                 default="my-model-service",
             )
         else:
@@ -126,43 +159,125 @@ def create_project(
     # 2. Model Repo
     if is_interactive and not auto_approve:
         model = Prompt.ask(
-            "> 📦 Enter Hugging Face model repository",
+            "> 📦 What is your model ID (Hugging Face repository)?",
             default=model or DEFAULT_MODEL_REPO,
         )
 
     # 3. Serving Engine
     if is_interactive and not auto_approve:
         template = Prompt.ask(
-            "> ⚡ Select inference engine [vllm / sglang]",
+            "> ⚡ What is your inference engine [vllm / sglang]?",
             default=template or DEFAULT_ENGINE,
         )
     engine_val = template.lower().strip()
     if engine_val not in ("vllm", "sglang"):
-        console.print(f"[bold yellow]⚠️ Unknown engine '{template}', falling back to 'vllm'[/bold yellow]")
+        console.print(
+            f"[bold yellow]⚠️ Unknown engine '{template}', falling back to 'vllm'[/bold yellow]"
+        )
         engine_val = "vllm"
 
     # 4. GCP Region
     if is_interactive and not auto_approve:
-        region = Prompt.ask(
-            "> 🌍 Enter GCP region",
-            default=region or DEFAULT_REGION,
-        )
+        default_region = region or DEFAULT_REGION
+        region = ""
+        while not region:
+            region = Prompt.ask(
+                "> 🌍 What is your GCP region?",
+                default=default_region,
+            ).strip()
+            if not region:
+                console.print("[bold red]❌ GCP region is required.[/bold red]")
 
     # 5. GCP Project ID Selection
-    default_project = resolve_gcp_project(override_project=project) or "YOUR_GCP_PROJECT_ID"
+    default_project = (
+        project or resolve_gcp_project(override_project=project) or "YOUR_GCP_PROJECT_ID"
+    )
     if is_interactive and not auto_approve:
-        resolved_project = (
-            Prompt.ask(
-                "> 📁 Enter GCP project ID",
+        resolved_project = ""
+        while not resolved_project:
+            resolved_project = Prompt.ask(
+                "> 📁 What is your GCP project ID?",
                 default=default_project,
             ).strip()
-            or default_project
-        )
+            if not resolved_project:
+                console.print("[bold red]❌ GCP project ID is required.[/bold red]")
     else:
         resolved_project = default_project
-    # 6. Context variables & Template rendering
-    gcs_bucket = f"{resolved_project}-models" if resolved_project != "YOUR_GCP_PROJECT_ID" else "your-gcs-bucket"
-    sa_email = ""
+
+    # 6. GCS Bucket Name
+    if is_interactive and not auto_approve:
+        gcs_bucket = (bucket or "").strip()
+        if gcs_bucket.startswith("gs://"):
+            gcs_bucket = gcs_bucket[len("gs://") :]
+        gcs_bucket = gcs_bucket.strip("/")
+
+        while not gcs_bucket:
+            if bucket:
+                raw_bucket = Prompt.ask(
+                    "> 🪣 What is your GCS bucket for model artifacts?",
+                    default=bucket,
+                )
+            else:
+                raw_bucket = Prompt.ask(
+                    "> 🪣 What is your GCS bucket for model artifacts?",
+                )
+            raw_bucket = raw_bucket.strip()
+            if raw_bucket.startswith("gs://"):
+                raw_bucket = raw_bucket[len("gs://") :]
+            gcs_bucket = raw_bucket.strip("/")
+            if not gcs_bucket:
+                console.print(
+                    "[bold red]❌ GCS bucket name is required.[/bold red]"
+                )
+    else:
+        raw_bucket = (bucket or "").strip()
+        if raw_bucket.startswith("gs://"):
+            raw_bucket = raw_bucket[len("gs://") :]
+        gcs_bucket = raw_bucket.strip("/")
+
+    # 7. Artifact Base Path
+    default_base_path = base_path or ""
+    if is_interactive and not auto_approve:
+        resolved_base_path = Prompt.ask(
+            "> 📂 What is your base path in GCS bucket (optional)?",
+            default=default_base_path,
+        ).strip()
+    else:
+        resolved_base_path = default_base_path
+    resolved_base_path = (
+        resolved_base_path.strip().strip("/") if resolved_base_path else ""
+    )
+
+    # 8. Service Account Email
+    default_sa = service_account or ""
+    if is_interactive and not auto_approve:
+        sa_email = Prompt.ask(
+            "> 👤 What is your service account email (optional)?",
+            default=default_sa,
+        ).strip()
+    else:
+        sa_email = default_sa
+
+    # 9. Hugging Face Token
+    default_hf = hf_token or ""
+    if is_interactive and not auto_approve:
+        resolved_hf_token = Prompt.ask(
+            "> 🔑 What is your Hugging Face token (optional)?",
+            default=default_hf,
+            password=True,
+        ).strip()
+    else:
+        resolved_hf_token = default_hf
+
+    # 10. Deployed Endpoint URL
+    default_endpoint = endpoint_url or ""
+    if is_interactive and not auto_approve:
+        resolved_endpoint_url = Prompt.ask(
+            "> 🌐 What is your deployed endpoint URL (optional)?",
+            default=default_endpoint,
+        ).strip()
+    else:
+        resolved_endpoint_url = default_endpoint
 
     context = {
         "project_name": project_name,
@@ -172,9 +287,10 @@ def create_project(
         "region": region,
         "project_id": resolved_project,
         "gcs_bucket": gcs_bucket,
+        "base_path": resolved_base_path,
         "service_account_email": sa_email,
-        "hf_token": "",
-        "endpoint_url": "",
+        "hf_token": resolved_hf_token,
+        "endpoint_url": resolved_endpoint_url,
         "auth_token": "",
     }
 
@@ -185,7 +301,9 @@ def create_project(
     )
 
     # 7. Success Banner
-    console.print(f"\n[bold green]✅ Success![/bold green] Your open model project [bold cyan]'{project_name}'[/bold cyan] is ready.\n")
+    console.print(
+        f"\n[bold green]✅ Success![/bold green] Your open model project [bold cyan]'{project_name}'[/bold cyan] is ready.\n"
+    )
     console.print("[bold]📖 Documentation[/bold]")
     console.print(f"   README:    cat {project_name}/README.md\n")
     console.print("[bold]🚀 Get Started[/bold]")

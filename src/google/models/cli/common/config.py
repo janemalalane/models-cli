@@ -15,12 +15,43 @@
 """Configuration management and environment variable loader."""
 
 import os
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from dotenv import load_dotenv
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from google.models.cli._gcp_project import resolve_gcp_project
-from google.models.cli.common.constants import DEFAULT_MODEL_REPO, DEFAULT_REGION
+from google.models.cli.common.constants import DEFAULT_MODEL_REPO
+
+# Single GCP region pattern, e.g. us-central1, europe-west4, asia-southeast1
+# Rejects multi-regions like 'us', 'eu', 'asia', 'global', 'nam4', 'eur4'.
+SINGLE_REGION_PATTERN = re.compile(r"^[a-z]+-[a-z]+\d+$")
+
+
+def is_single_region(location: str) -> bool:
+    """Returns True if location is a valid single GCP region (e.g. us-central1), not a multi-region."""
+    if not location:
+        return False
+    return bool(SINGLE_REGION_PATTERN.match(location.strip().lower()))
+
+
+def validate_single_region(location: str) -> str:
+    """Validates that a location string is a single GCP region and returns it normalized."""
+    cleaned = location.strip().lower()
+    if not is_single_region(cleaned):
+        raise ValueError(
+            f"Invalid GOOGLE_CLOUD_LOCATION '{location}'. "
+            "Must be a single region like 'us-central1' (not a multi-region like 'US', 'EU', or 'ASIA')."
+        )
+    return cleaned
+
+
+def extract_model_name(model_id: str) -> str:
+    """Extracts the model name (second part of 'org/model-name', or full string if no slash)."""
+    parts = model_id.strip().strip("/").split("/")
+    if len(parts) >= 2:
+        return parts[1]
+    return parts[0]
 
 
 def find_dotenv() -> Optional[Path]:
@@ -50,28 +81,108 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Google Cloud Configuration
+    # Compulsory Google Cloud Configuration (validated via validate_deployment_env)
     google_cloud_project: Optional[str] = None
-    google_cloud_location: str = (
-        os.environ.get("GOOGLE_CLOUD_LOCATION") or DEFAULT_REGION
-    )
-    google_cloud_storage_bucket: Optional[str] = os.environ.get(
-        "GOOGLE_CLOUD_STORAGE_BUCKET"
-    )
-    service_account_email: Optional[str] = os.environ.get("SERVICE_ACCOUNT_EMAIL")
+    google_cloud_location: Optional[str] = None
+    google_cloud_storage_bucket: Optional[str] = None
 
-    # Container / Docker Registry
-    docker_repository: Optional[str] = os.environ.get("DOCKER_REPOSITORY")
-    device_type: Optional[str] = os.environ.get("DEVICE_TYPE")
+    # Optional Artifact Base Path inside the GCS bucket.
+    # Remains None if not provided in environment.
+    artifact_base_path: Optional[str] = None
+    base_path: Optional[str] = None
+    google_cloud_storage_bucket_base_path: Optional[str] = None
+
+    # Optional Service Account & Container Configuration
+    service_account_email: Optional[str] = None
+    docker_repository: Optional[str] = None
+    device_type: Optional[str] = None
 
     # Model Configuration (Single Source of Truth)
-    hf_token: Optional[str] = os.environ.get("HF_TOKEN")
-    model_id: str = (
-        os.environ.get("MODEL_ID")
-        or os.environ.get("MODEL")
-        or os.environ.get("HF_MODEL_REPO")
-        or DEFAULT_MODEL_REPO
-    )
+    hf_token: Optional[str] = None
+    model_id: str = DEFAULT_MODEL_REPO
+
+    # Endpoint & Auth
+    auth_token: Optional[str] = None
+    endpoint_url: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _load_and_resolve_env(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Loads environment variables dynamically and sets defaults for derived fields."""
+        data = dict(values) if isinstance(values, dict) else {}
+
+        # 1. Resolve model_id with priority: explicit arg > MODEL_ID > MODEL > HF_MODEL_REPO > default
+        if not data.get("model_id"):
+            data["model_id"] = (
+                os.environ.get("MODEL_ID")
+                or os.environ.get("MODEL")
+                or os.environ.get("HF_MODEL_REPO")
+                or DEFAULT_MODEL_REPO
+            )
+
+        # 2. Resolve GCP Project, Location, and Bucket from env if not explicitly passed
+        if "google_cloud_project" not in data:
+            data["google_cloud_project"] = (
+                os.environ.get("GOOGLE_CLOUD_PROJECT") or None
+            )
+        if "google_cloud_location" not in data:
+            data["google_cloud_location"] = (
+                os.environ.get("GOOGLE_CLOUD_LOCATION") or None
+            )
+        if "google_cloud_storage_bucket" not in data:
+            data["google_cloud_storage_bucket"] = (
+                os.environ.get("GOOGLE_CLOUD_STORAGE_BUCKET") or None
+            )
+
+        # Normalize bucket name if gs:// prefix or trailing slash was included
+        if data.get("google_cloud_storage_bucket"):
+            bucket_val = str(data["google_cloud_storage_bucket"]).strip()
+            if bucket_val.startswith("gs://"):
+                bucket_val = bucket_val[len("gs://") :]
+            data["google_cloud_storage_bucket"] = bucket_val.strip("/") or None
+
+        # Validate single region if google_cloud_location is set
+        if data.get("google_cloud_location"):
+            data["google_cloud_location"] = validate_single_region(
+                str(data["google_cloud_location"])
+            )
+
+        # 3. Resolve artifact_base_path, base_path, and google_cloud_storage_bucket_base_path (stays None if not provided)
+        raw_artifact_path = (
+            data.get("google_cloud_storage_bucket_base_path")
+            or data.get("base_path")
+            or data.get("artifact_base_path")
+            or os.environ.get("GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH")
+            or os.environ.get("BASE_PATH")
+            or os.environ.get("ARTIFACT_BASE_PATH")
+        )
+        if raw_artifact_path and str(raw_artifact_path).strip():
+            cleaned_base_path = str(raw_artifact_path).strip().strip("/")
+            data["artifact_base_path"] = cleaned_base_path
+            data["base_path"] = cleaned_base_path
+            data["google_cloud_storage_bucket_base_path"] = cleaned_base_path
+        else:
+            data["artifact_base_path"] = None
+            data["base_path"] = None
+            data["google_cloud_storage_bucket_base_path"] = None
+
+        # 4. Optional environment variables
+        if "service_account_email" not in data:
+            data["service_account_email"] = (
+                os.environ.get("SERVICE_ACCOUNT_EMAIL") or None
+            )
+        if "docker_repository" not in data:
+            data["docker_repository"] = os.environ.get("DOCKER_REPOSITORY") or None
+        if "device_type" not in data:
+            data["device_type"] = os.environ.get("DEVICE_TYPE") or None
+        if "hf_token" not in data:
+            data["hf_token"] = os.environ.get("HF_TOKEN") or None
+        if "auth_token" not in data:
+            data["auth_token"] = os.environ.get("AUTH_TOKEN") or None
+        if "endpoint_url" not in data:
+            data["endpoint_url"] = os.environ.get("ENDPOINT_URL") or None
+
+        return data
 
     @property
     def model(self) -> str:
@@ -83,37 +194,53 @@ class Settings(BaseSettings):
         """Alias for model_id for backwards compatibility."""
         return self.model_id
 
-    # Endpoint & Auth
-    auth_token: Optional[str] = os.environ.get("AUTH_TOKEN")
-    endpoint_url: Optional[str] = os.environ.get("ENDPOINT_URL")
-
-    def get_project_id(self, override_project: Optional[str] = None) -> Optional[str]:
-        """Resolves active GCP project ID using project resolution chain."""
-        return resolve_gcp_project(
-            override_project=override_project or self.google_cloud_project
-        )
+    @property
+    def model_name(self) -> str:
+        """The second segment of model_id (e.g. 'gemma-4-31B-it' from 'google/gemma-4-31B-it')."""
+        return extract_model_name(self.model_id)
 
     def validate_deployment_env(
-        self, override_project: Optional[str] = None
-    ) -> dict[str, str | None]:
-        """Validates that essential deployment variables are set."""
-        project_id = self.get_project_id(override_project)
+        self,
+        override_project: Optional[str] = None,
+        override_location: Optional[str] = None,
+        override_bucket: Optional[str] = None,
+    ) -> dict[str, str]:
+        """Validates that compulsory deployment variables are set and valid.
+
+        Compulsory variables:
+        - GOOGLE_CLOUD_PROJECT
+        - GOOGLE_CLOUD_LOCATION (must be a single region like 'us-central1', not multi-region like 'US')
+        - GOOGLE_CLOUD_STORAGE_BUCKET
+        """
+        project_id = override_project or self.google_cloud_project
+        location = override_location or self.google_cloud_location
+        bucket = override_bucket or self.google_cloud_storage_bucket
+
         missing = []
         if not project_id:
             missing.append("GOOGLE_CLOUD_PROJECT")
-        if not self.google_cloud_location:
+        if not location:
             missing.append("GOOGLE_CLOUD_LOCATION")
+        if not bucket:
+            missing.append("GOOGLE_CLOUD_STORAGE_BUCKET")
 
-        if not project_id or not self.google_cloud_location:
+        if missing or not project_id or not location or not bucket:
             raise ValueError(
                 f"Missing required environment variables: {', '.join(missing)}. "
                 "Please configure them in your .env file or environment."
             )
 
+        validated_location = validate_single_region(location)
+
+        cleaned_bucket = bucket.strip()
+        if cleaned_bucket.startswith("gs://"):
+            cleaned_bucket = cleaned_bucket[len("gs://") :]
+        cleaned_bucket = cleaned_bucket.strip("/")
+
         return {
             "project_id": project_id,
-            "location": self.google_cloud_location,
-            "service_account": self.service_account_email,
+            "location": validated_location,
+            "bucket": cleaned_bucket,
         }
 
 

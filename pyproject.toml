@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "google-models-cli"
 version = "0.1.0"
-description = "CLI toolchain to evaluate, optimize, deploy, and benchmark open-weights GenAI models on Google Cloud (GEAP/Vertex AI)."
+description = "CLI toolchain to evaluate, optimize, deploy, and benchmark open-weights GenAI models on Google Cloud (Gemini Enterprise Online Prediction)."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"

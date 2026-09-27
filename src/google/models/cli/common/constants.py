@@ -16,9 +16,13 @@
 
 from enum import Enum
 
-# Google Pre-built Serving Container Images for Vertex AI / GEAP
-DEFAULT_VLLM_CONTAINER_IMAGE = "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-vllm-serve:latest"
-DEFAULT_SGLANG_CONTAINER_IMAGE = "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-sglang-serve:latest"
+# Google Pre-built Serving Container Images for Gemini Enterprise Online Prediction
+DEFAULT_VLLM_CONTAINER_IMAGE = (
+    "us-docker.pkg.dev/agent-platform-mg-public/containers/pytorch-vllm-serve"
+)
+DEFAULT_SGLANG_CONTAINER_IMAGE = (
+    "us-docker.pkg.dev/agent-platform-mg-public/containers/pytorch-sglang-serve"
+)
 
 
 class InferenceEngine(str, Enum):
@@ -36,8 +40,22 @@ class InferenceEngine(str, Enum):
     @property
     def env_vars(self) -> dict[str, str]:
         envs = {
-            InferenceEngine.VLLM: {"VLLM_LOGGING_LEVEL": "INFO"},
-            InferenceEngine.SGLANG: {"SGLANG_LOGGING_LEVEL": "INFO"},
+            InferenceEngine.VLLM: {
+                "VLLM_LOGGING_LEVEL": "INFO",
+                "HF_HOME": "/dev/shm/hf",
+                "TMPDIR": "/dev/shm",
+                "LOCAL_DOWNLOAD_DIR": "/dev/shm",
+                "LOCAL_MODEL_DIR": "/dev/shm/model_dir",
+                "CLOUDSDK_STORAGE_MAX_RETRIES": "3",
+            },
+            InferenceEngine.SGLANG: {
+                "SGLANG_LOGGING_LEVEL": "INFO",
+                "HF_HOME": "/dev/shm/hf",
+                "TMPDIR": "/dev/shm",
+                "LOCAL_DOWNLOAD_DIR": "/dev/shm",
+                "LOCAL_MODEL_DIR": "/dev/shm/model_dir",
+                "CLOUDSDK_STORAGE_MAX_RETRIES": "3",
+            },
         }
         return envs[self]
 
@@ -67,15 +85,16 @@ DEFAULT_HEALTH_ROUTE = "/health"
 DEFAULT_CONTAINER_PORT = 8080
 DEFAULT_CONTAINER_HOST = "0.0.0.0"
 DEFAULT_HOST = DEFAULT_CONTAINER_HOST
-DEFAULT_SHARED_MEMORY_MB = 64 * 1024  # 64 GB
+DEFAULT_SHARED_MEMORY_MB = 128 * 1024  # 128 GB
 
 # Default Engine Parameters
 DEFAULT_TENSOR_PARALLEL_SIZE = 1
 DEFAULT_MAX_MODEL_LEN = 4096
 DEFAULT_KV_CACHE_DTYPE = "fp8"
 DEFAULT_GPU_MEMORY_UTILIZATION = 0.90
+DEFAULT_MAX_NUM_SEQS = 512
 
-# Standard Hardware Catalog for GEAP / Vertex AI
+# Standard Hardware Catalog for Gemini Enterprise Online Prediction
 HARDWARE_SPECS: dict[str, dict] = {
     # Nvidia GPUs
     "a4-highgpu-8g": {
@@ -102,7 +121,7 @@ HARDWARE_SPECS: dict[str, dict] = {
         "family": AcceleratorFamily.GPU,
         "chip_name": "Nvidia L4 (4x)",
         "accelerator_type": "NVIDIA_L4",
-        "accelerator_count": 1,
+        "accelerator_count": 4,
         "vram_gb": 192,
         "hourly_cost_usd": 3.40,
         "memory_bandwidth_gb_s": 1200,

@@ -530,8 +530,10 @@ def apply_recommendation(
             with open(deploy_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             data["machine_type"] = machine_type
-            data["accelerator_type"] = accel_type
-            data["accelerator_count"] = accel_count
+            if accel_type:
+                data["accelerator_type"] = accel_type
+            if accel_count:
+                data["accelerator_count"] = accel_count
             with open(deploy_file, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
             updated = True

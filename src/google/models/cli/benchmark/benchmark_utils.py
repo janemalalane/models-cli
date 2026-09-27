@@ -48,7 +48,7 @@ def generate_benchmark_config(
             config_data = yaml.safe_load(f) or {}
     else:
         config_data = {
-            "api": {"type": "chat", "streaming": True},
+            "api": {"type": "completion", "streaming": True},
             "data": {
                 "type": "synthetic",
                 "input_distribution": {

@@ -61,45 +61,7 @@ class _MainGroup(LazyGroup):
 @click.group(cls=_MainGroup, no_args_is_help=True)
 @click.version_option(version=__version__, prog_name="models-cli")
 def main() -> None:
-    """Lifecycle CLI for evaluating, optimizing, deploying, and benchmarking open-weights models on Google Cloud (GEAP / Vertex AI)."""
-
-
-@main.command(name="info")
-def info() -> None:
-    """Displays current environment diagnostics and active GCP configuration."""
-    from google.models.cli.common.config import settings
-
-    project_id = resolve_gcp_project() or "(not set)"
-    account = get_active_gcp_account() or "(not set)"
-
-    table = Table(
-        title="models-cli Environment Information",
-        border_style="dim",
-        header_style="bold magenta",
-    )
-    table.add_column("Property", style="bold cyan")
-    table.add_column("Value", style="green")
-
-    table.add_row("models-cli Version", __version__)
-    table.add_row("Active GCP Account", account)
-    table.add_row("Resolved GCP Project", project_id)
-    authed, auth_display = is_authenticated()
-    table.add_row(
-        "Authentication Status",
-        f"[green]✓ {auth_display}[/green]"
-        if authed
-        else "[bold yellow]❌ Not authenticated (run 'gcloud auth application-default login')[/bold yellow]",
-    )
-    table.add_row(
-        "Default Location/Region", settings.google_cloud_location or DEFAULT_REGION
-    )
-    table.add_row("Default Model", settings.hf_model_repo or DEFAULT_MODEL_REPO)
-    table.add_row("Service Account", settings.service_account_email or "(not set)")
-    table.add_row(
-        "GCS Storage Bucket", settings.google_cloud_storage_bucket or "(not set)"
-    )
-
-    console.print(table)
+    """Lifecycle CLI for evaluating, optimizing, deploying, and benchmarking open-weights models on Google Cloud (Gemini Enterprise Online Prediction)."""
 
 
 # Subcommands registered lazily
@@ -139,18 +101,56 @@ main.add_lazy_command(
 main.add_lazy_command(
     "deploy",
     "google.models.cli.deploy.cmd_deploy:deploy",
-    "Deploy open model container to GEAP / Vertex AI online prediction endpoint",
+    "Deploy open model container to Gemini Enterprise Online Prediction endpoint",
+)
+main.add_lazy_command(
+    "playground",
+    "google.models.cli.playground.cmd_playground:playground",
+    "Interactive playground for deployed endpoints using Completions or Chat Completions API",
 )
 main.add_lazy_command(
     "benchmark",
     "google.models.cli.benchmark.cmd_benchmark:benchmark",
     "Run performance & load testing with inference-perf and generate analysis reports",
 )
-main.add_lazy_command(
-    "playground",
-    "google.models.cli.playground.cmd_playground:playground",
-    "Interactive chat playground for deployed endpoints using Chat Completions API",
-)
+
+
+@main.command(name="info")
+def info() -> None:
+    """Displays current environment diagnostics and active GCP configuration."""
+    from google.models.cli.common.config import settings
+
+    project_id = resolve_gcp_project() or "(not set)"
+    account = get_active_gcp_account() or "(not set)"
+
+    table = Table(
+        title="models-cli Environment Information",
+        border_style="dim",
+        header_style="bold magenta",
+    )
+    table.add_column("Property", style="bold cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("models-cli Version", __version__)
+    table.add_row("Active GCP Account", account)
+    table.add_row("Resolved GCP Project", project_id)
+    authed, auth_display = is_authenticated()
+    table.add_row(
+        "Authentication Status",
+        f"[green]✓ {auth_display}[/green]"
+        if authed
+        else "[bold yellow]❌ Not authenticated (run 'gcloud auth application-default login')[/bold yellow]",
+    )
+    table.add_row(
+        "Default Location/Region", settings.google_cloud_location or DEFAULT_REGION
+    )
+    table.add_row("Default Model", settings.hf_model_repo or DEFAULT_MODEL_REPO)
+    table.add_row("Service Account", settings.service_account_email or "(not set)")
+    table.add_row(
+        "GCS Storage Bucket", settings.google_cloud_storage_bucket or "(not set)"
+    )
+
+    console.print(table)
 
 patch_source_in_help(main)
 

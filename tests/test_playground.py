@@ -31,10 +31,11 @@ def test_playground_help():
     """Verify that playground --help returns 0 and displays options."""
     result = runner.invoke(app, ["playground", "--help"])
     assert result.exit_code == 0
-    assert "Interactive chat playground" in result.output
+    assert "Interactive playground" in result.output
     assert "--endpoint" in result.output
     assert "--model" in result.output
     assert "--stream" in result.output
+    assert "--api" in result.output
 
 
 def test_playground_missing_endpoint_error(monkeypatch):
@@ -52,8 +53,8 @@ def test_playground_missing_endpoint_error(monkeypatch):
         assert "No deployed endpoint found" in result.output
 
 
-def test_playground_single_message_stream(monkeypatch):
-    """Verify single message with streaming output."""
+def test_playground_single_message_stream_chat(monkeypatch):
+    """Verify single message with streaming output using default Chat Completions API."""
     import google.models.cli.playground.cmd_playground as pg_mod
 
     monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
@@ -85,8 +86,8 @@ def test_playground_single_message_stream(monkeypatch):
     assert call_kwargs["messages"] == [{"role": "user", "content": "Say hi"}]
 
 
-def test_playground_single_message_non_stream(monkeypatch):
-    """Verify single message with --no-stream."""
+def test_playground_single_message_non_stream_chat(monkeypatch):
+    """Verify single message with --no-stream using default Chat Completions API."""
     import google.models.cli.playground.cmd_playground as pg_mod
 
     monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
@@ -101,7 +102,7 @@ def test_playground_single_message_non_stream(monkeypatch):
     )
 
     mock_resp = MagicMock()
-    mock_resp.choices = [MagicMock(message=MagicMock(content="Non-stream response"))]
+    mock_resp.choices = [MagicMock(message=MagicMock(content="Non-stream chat response"))]
 
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = mock_resp
@@ -111,15 +112,15 @@ def test_playground_single_message_non_stream(monkeypatch):
         app, ["playground", "--no-stream", "-m", "Tell me something"]
     )
     assert result.exit_code == 0
-    assert "Non-stream response" in result.output
+    assert "Non-stream chat response" in result.output
 
     call_kwargs = mock_client.chat.completions.create.call_args[1]
     assert call_kwargs["stream"] is False
     assert call_kwargs["messages"] == [{"role": "user", "content": "Tell me something"}]
 
 
-def test_playground_with_system_prompt(monkeypatch):
-    """Verify system prompt is prepended to messages."""
+def test_playground_with_system_prompt_chat(monkeypatch):
+    """Verify system prompt is included in Chat Completions API mode."""
     import google.models.cli.playground.cmd_playground as pg_mod
 
     monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
@@ -150,6 +151,35 @@ def test_playground_with_system_prompt(monkeypatch):
     ]
 
 
+def test_playground_completions_api_flag(monkeypatch):
+    """Verify --api completions uses raw completions."""
+    import google.models.cli.playground.cmd_playground as pg_mod
+
+    monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
+    monkeypatch.setattr(
+        pg_mod,
+        "resolve_endpoint_and_base_url",
+        lambda **kwargs: ("https://test-url/invoke/v1", "ep-123", "gemma"),
+    )
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [MagicMock(text="Completions response")]
+
+    mock_client = MagicMock()
+    mock_client.completions.create.return_value = [mock_chunk]
+    monkeypatch.setattr(pg_mod, "_get_openai_client", lambda base_url: mock_client)
+
+    result = runner.invoke(
+        app,
+        ["playground", "--api", "completions", "-s", "System info", "Hi"],
+    )
+    assert result.exit_code == 0
+    assert "Completions response" in result.output
+
+    call_kwargs = mock_client.completions.create.call_args[1]
+    assert call_kwargs["prompt"] == "System info\n\nHi"
+
+
 def test_playground_raw_output(monkeypatch):
     """Verify --raw outputs the serialized chat completion."""
     import google.models.cli.playground.cmd_playground as pg_mod
@@ -163,7 +193,7 @@ def test_playground_raw_output(monkeypatch):
 
     mock_resp = MagicMock()
     mock_resp.model_dump_json.return_value = json.dumps(
-        {"id": "chatcmpl-test", "content": "raw data"}
+        {"id": "chatcmpl-test", "text": "raw data"}
     )
 
     mock_client = MagicMock()
@@ -264,3 +294,88 @@ def test_resolve_endpoint_rewrites_shared_aiplatform_url_for_dedicated():
             == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
         )
         assert rn == "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
+
+
+def test_extract_reasoning_and_content_attribute():
+    """Verify _extract_reasoning_and_content extracts reasoning_content attribute when present."""
+    from google.models.cli.playground.cmd_playground import _extract_reasoning_and_content
+
+    mock_obj = MagicMock()
+    mock_obj.reasoning_content = "Step-by-step thinking"
+    mock_obj.content = "Final response"
+    reasoning, content = _extract_reasoning_and_content(mock_obj)
+    assert reasoning == "Step-by-step thinking"
+    assert content == "Final response"
+
+
+def test_extract_reasoning_and_content_content_only():
+    """Verify _extract_reasoning_and_content returns None for reasoning when only content is present."""
+    from google.models.cli.playground.cmd_playground import _extract_reasoning_and_content
+
+    mock_obj = MagicMock(spec=["content"])
+    mock_obj.content = "Direct answer"
+    reasoning, content = _extract_reasoning_and_content(mock_obj)
+    assert reasoning is None
+    assert content == "Direct answer"
+
+
+def test_playground_repl_with_api_reasoning_content(monkeypatch):
+    """Verify REPL displays [Thought] when API returns reasoning_content attribute."""
+    import google.models.cli.playground.cmd_playground as pg_mod
+
+    monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
+    monkeypatch.setattr(
+        pg_mod,
+        "resolve_endpoint_and_base_url",
+        lambda **kwargs: ("https://test-url/invoke/v1", "ep-123", "deepseek-r1"),
+    )
+
+    mock_delta1 = MagicMock(spec=["reasoning_content", "content"])
+    mock_delta1.reasoning_content = "Thinking about greeting"
+    mock_delta1.content = None
+
+    mock_delta2 = MagicMock(spec=["reasoning_content", "content"])
+    mock_delta2.reasoning_content = None
+    mock_delta2.content = "Hello there!"
+
+    mock_chunk1 = MagicMock()
+    mock_chunk1.choices = [MagicMock(delta=mock_delta1)]
+    mock_chunk2 = MagicMock()
+    mock_chunk2.choices = [MagicMock(delta=mock_delta2)]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [mock_chunk1, mock_chunk2]
+    monkeypatch.setattr(pg_mod, "_get_openai_client", lambda base_url: mock_client)
+
+    result = runner.invoke(app, ["playground"], input="hi\nexit\n")
+    assert result.exit_code == 0
+    assert "[Thought]" in result.output
+    assert "Thinking about greeting" in result.output
+    assert "Model > Hello there!" in result.output
+
+
+def test_playground_repl_content_only_no_splitting(monkeypatch):
+    """Verify REPL displays raw content under Model > when only content is provided by API."""
+    import google.models.cli.playground.cmd_playground as pg_mod
+
+    monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
+    monkeypatch.setattr(
+        pg_mod,
+        "resolve_endpoint_and_base_url",
+        lambda **kwargs: ("https://test-url/invoke/v1", "ep-123", "muse-glimmer"),
+    )
+
+    mock_delta = MagicMock(spec=["content"])
+    mock_delta.content = "to=selfhi\nWe need to respond.assistant to=userHi!"
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [MagicMock(delta=mock_delta)]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [mock_chunk]
+    monkeypatch.setattr(pg_mod, "_get_openai_client", lambda base_url: mock_client)
+
+    result = runner.invoke(app, ["playground"], input="hi\nexit\n")
+    assert result.exit_code == 0
+    assert "[Thought]" not in result.output
+    assert "Model > to=selfhi\nWe need to respond.assistant to=userHi!" in result.output

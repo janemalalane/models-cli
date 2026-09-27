@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Playground command for sending messages to deployed endpoints via Chat Completions API."""
+"""Playground command for sending messages to deployed endpoints via Completions or Chat Completions API."""
 
 from __future__ import annotations
 
@@ -40,6 +40,39 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+def _extract_reasoning_and_content(obj: Any) -> tuple[str | None, str | None]:
+    """Extracts reasoning_content and content attributes from an API message or delta."""
+    if not obj:
+        return None, None
+
+    # 1. Reasoning content attribute (e.g. vLLM with --reasoning-parser, DeepSeek-R1)
+    reasoning = getattr(obj, "reasoning_content", None)
+    if not isinstance(reasoning, str):
+        extra = getattr(obj, "model_extra", None)
+        if isinstance(extra, dict):
+            extra_val = extra.get("reasoning_content")
+            reasoning = extra_val if isinstance(extra_val, str) else None
+        else:
+            reasoning = None
+    if not reasoning and isinstance(obj, dict):
+        dict_val = obj.get("reasoning_content")
+        reasoning = dict_val if isinstance(dict_val, str) else None
+
+    # 2. Main content attribute
+    content = getattr(obj, "content", None)
+    if not isinstance(content, str):
+        if isinstance(obj, dict):
+            dict_val = obj.get("content")
+            content = dict_val if isinstance(dict_val, str) else None
+        else:
+            content = None
+
+    return (
+        reasoning if reasoning else None,
+        content if content is not None else None,
+    )
+
+
 def _get_auth_token() -> str:
     """Retrieve and refresh Google Cloud credentials token."""
     creds, _ = google.auth.default()
@@ -50,7 +83,7 @@ def _get_auth_token() -> str:
 
 
 def _get_openai_client(base_url: str) -> OpenAI:
-    """Instantiate OpenAI client configured for the Vertex AI endpoint."""
+    """Instantiate OpenAI client configured for the Gemini Enterprise Online Prediction endpoint."""
     token = _get_auth_token()
     return OpenAI(base_url=base_url, api_key=token)
 
@@ -111,7 +144,7 @@ def resolve_endpoint_and_base_url(
         or os.environ.get("ENDPOINT")
     )
 
-    # If no explicit endpoint provided or recorded, discover via Vertex AI API
+    # If no explicit endpoint provided or recorded, discover via Gemini Enterprise Online Prediction
     if not endpoint_target:
         try:
             aiplatform.init(project=resolved_project, location=resolved_location)
@@ -149,7 +182,7 @@ def resolve_endpoint_and_base_url(
             if chosen_ep:
                 endpoint_target = chosen_ep.resource_name
         except Exception as e:  # noqa: BLE001
-            logger.debug("Could not auto-discover endpoints from Vertex AI: %s", e)
+            logger.debug("Could not auto-discover endpoints from Gemini Enterprise Online Prediction: %s", e)
 
     if not endpoint_target:
         raise click.ClickException(
@@ -181,7 +214,7 @@ def resolve_endpoint_and_base_url(
 
         # Direct URL formatting
         url = endpoint_target.rstrip("/")
-        url = url.removesuffix("/chat/completions")
+        url = url.removesuffix("/chat/completions").removesuffix("/completions")
         if url.endswith("/invoke"):
             url = f"{url}/v1"
         elif not url.endswith("/v1"):
@@ -229,7 +262,7 @@ def resolve_endpoint_and_base_url(
     "--endpoint",
     "-e",
     default=None,
-    help="Vertex AI endpoint resource name, ID, or dedicated URL. Defaults to deployment_metadata.json or active endpoint.",
+    help="Gemini Enterprise Online Prediction endpoint resource name, ID, or dedicated URL. Defaults to deployment_metadata.json or active endpoint.",
 )
 @click.option(
     "--model",
@@ -279,6 +312,13 @@ def resolve_endpoint_and_base_url(
     default=False,
     help="Print raw JSON response from endpoint instead of formatted text.",
 )
+@click.option(
+    "--api",
+    type=click.Choice(["chat", "completions"], case_sensitive=False),
+    default="chat",
+    show_default=True,
+    help="Target OpenAI API endpoint ('chat' or 'completions').",
+)
 def playground(
     prompt: str | None = None,
     message: str | None = None,
@@ -292,21 +332,25 @@ def playground(
     project: str | None = None,
     region: str | None = None,
     raw: bool = False,
+    api: str = "chat",
 ) -> None:
-    """Interactive chat playground and test interface for deployed endpoints.
+    """Interactive playground and test interface for deployed endpoints.
 
-    Sends messages to the deployed model serving container via the OpenAI-compatible
-    Chat Completions API.
+    Sends requests to the deployed model serving container via the OpenAI-compatible
+    Chat Completions or Completions API.
 
     \b
     Examples:
-      # Send a single prompt and stream response
+      # Send a single prompt via Chat Completions API (default)
       models-cli playground "Tell me a joke about computers"
 
-      # Send a prompt with a custom system instruction
+      # Send a prompt with a system prompt
       models-cli playground -s "You are a poet." "Explain neural networks"
 
-      # Launch interactive multi-turn chat session
+      # Use raw Completions API
+      models-cli playground --api completions "Tell me a joke about computers"
+
+      # Launch interactive multi-turn session
       models-cli playground
 
       # Send message to a specific endpoint
@@ -328,18 +372,83 @@ def playground(
     client = _get_openai_client(base_url)
 
     effective_prompt = message if message is not None else prompt
+    use_chat = api.lower() == "chat"
 
     # 1. Single-shot prompt mode
     if effective_prompt is not None:
-        messages: list[dict[str, Any]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": effective_prompt})
+        if use_chat:
+            messages: list[dict[str, Any]] = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": effective_prompt})
+
+            if raw:
+                resp = client.chat.completions.create(
+                    model=resolved_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    stream=False,
+                )
+                click.echo(resp.model_dump_json(indent=2))
+                return
+
+            if stream:
+                response_stream = client.chat.completions.create(
+                    model=resolved_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    stream=True,
+                )
+                thought_header_printed = False
+                content_started = False
+                for chunk in response_stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    reasoning, content = _extract_reasoning_and_content(delta)
+                    if reasoning:
+                        if not thought_header_printed:
+                            console.print("[dim][Thought][/dim]")
+                            thought_header_printed = True
+                        console.print(reasoning, style="dim", end="", highlight=False, markup=False)
+                    if content:
+                        if thought_header_printed and not content_started:
+                            console.print()
+                            console.print()
+                            content_started = True
+                        console.print(content, end="", highlight=False, markup=False)
+                console.print()
+            else:
+                response = client.chat.completions.create(
+                    model=resolved_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    stream=False,
+                )
+                msg = response.choices[0].message if response.choices else None
+                reasoning, content = _extract_reasoning_and_content(msg)
+                if reasoning:
+                    console.print("[dim][Thought][/dim]")
+                    console.print(reasoning, style="dim", highlight=False, markup=False)
+                    console.print()
+                console.print(Markdown(content or ""))
+            return
+
+        # Completions API (default)
+        prompt_text = (
+            f"{system}\n\n{effective_prompt}" if system else effective_prompt
+        )
 
         if raw:
-            resp = client.chat.completions.create(
+            resp = client.completions.create(
                 model=resolved_model,
-                messages=messages,
+                prompt=prompt_text,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,
@@ -349,36 +458,39 @@ def playground(
             return
 
         if stream:
-            response_stream = client.chat.completions.create(
+            comp_stream = client.completions.create(
                 model=resolved_model,
-                messages=messages,
+                prompt=prompt_text,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,
                 stream=True,
             )
-            for chunk in response_stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    console.print(chunk.choices[0].delta.content, end="")
+            for chunk in comp_stream:
+                if chunk.choices and chunk.choices[0].text:
+                    console.print(chunk.choices[0].text, end="")
             console.print()
         else:
-            response = client.chat.completions.create(
+            comp_resp = client.completions.create(
                 model=resolved_model,
-                messages=messages,
+                prompt=prompt_text,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 top_p=top_p,
                 stream=False,
             )
-            content = response.choices[0].message.content or ""
+            content = (
+                comp_resp.choices[0].text if comp_resp.choices else ""
+            ) or ""
             console.print(Markdown(content))
         return
 
-    # 2. Interactive multi-turn chat session (REPL)
+    # 2. Interactive session (REPL)
     header_info = (
         f"[bold cyan]Endpoint:[/bold cyan]  {ep_identifier}\n"
         f"[bold cyan]Model:[/bold cyan]     {resolved_model}\n"
-        f"[bold cyan]Base URL:[/bold cyan]  {base_url}\n\n"
+        f"[bold cyan]Base URL:[/bold cyan]  {base_url}\n"
+        f"[bold cyan]API:[/bold cyan]       {api.lower()}\n\n"
         "[dim]Commands: [bold]'exit'[/bold], [bold]'quit'[/bold], or [bold]'q'[/bold] to leave • [bold]'/clear'[/bold] to reset history[/dim]"
     )
     console.print(
@@ -406,45 +518,143 @@ def playground(
             console.print("[dim]Conversation history cleared.[/dim]")
             continue
 
-        history.append({"role": "user", "content": user_input})
-        console.print("[bold green]Model > [/bold green]", end="")
-
         # Refresh client token for long-running sessions
         client = _get_openai_client(base_url)
 
-        if stream:
-            collected_chunks: list[str] = []
-            try:
-                chat_stream = client.chat.completions.create(
-                    model=resolved_model,
-                    messages=history,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
-                    stream=True,
-                )
-                for chunk in chat_stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        text = chunk.choices[0].delta.content
-                        console.print(text, end="")
-                        collected_chunks.append(text)
-                console.print()
-                assistant_reply = "".join(collected_chunks)
-                history.append({"role": "assistant", "content": assistant_reply})
-            except Exception as e:  # noqa: BLE001
-                console.print(f"\n[red]Error from model endpoint:[/red] {e}")
+        if use_chat:
+            history.append({"role": "user", "content": user_input})
+            if stream:
+                thought_header_printed = False
+                model_label_printed = False
+                collected_content: list[str] = []
+                try:
+                    chat_stream = client.chat.completions.create(
+                        model=resolved_model,
+                        messages=history,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        top_p=top_p,
+                        stream=True,
+                    )
+                    for chunk in chat_stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        reasoning, content = _extract_reasoning_and_content(delta)
+
+                        if reasoning:
+                            if not thought_header_printed:
+                                console.print("[dim][Thought][/dim]")
+                                thought_header_printed = True
+                            console.print(
+                                reasoning,
+                                style="dim",
+                                end="",
+                                highlight=False,
+                                markup=False,
+                            )
+
+                        if content:
+                            if thought_header_printed and not model_label_printed:
+                                console.print()
+                                console.print()
+                            if not model_label_printed:
+                                console.print(
+                                    "[bold green]Model > [/bold green]", end=""
+                                )
+                                model_label_printed = True
+                            console.print(
+                                content, end="", highlight=False, markup=False
+                            )
+                            collected_content.append(content)
+
+                    if not model_label_printed and not thought_header_printed:
+                        console.print("[bold green]Model > [/bold green]", end="")
+
+                    console.print()
+                    assistant_reply = "".join(collected_content)
+                    history.append({"role": "assistant", "content": assistant_reply})
+                except Exception as e:  # noqa: BLE001
+                    console.print(f"\n[red]Error from model endpoint:[/red] {e}")
+            else:
+                try:
+                    resp = client.chat.completions.create(
+                        model=resolved_model,
+                        messages=history,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        top_p=top_p,
+                        stream=False,
+                    )
+                    msg = resp.choices[0].message if resp.choices else None
+                    reasoning, content = _extract_reasoning_and_content(msg)
+                    if reasoning:
+                        console.print("[dim][Thought][/dim]")
+                        console.print(
+                            reasoning,
+                            style="dim",
+                            highlight=False,
+                            markup=False,
+                        )
+                        console.print()
+                    reply_text = content or ""
+                    console.print(f"[bold green]Model > [/bold green]{reply_text}")
+                    history.append({"role": "assistant", "content": reply_text})
+                except Exception as e:  # noqa: BLE001
+                    console.print(f"\n[red]Error from model endpoint:[/red] {e}")
         else:
-            try:
-                resp = client.chat.completions.create(
-                    model=resolved_model,
-                    messages=history,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
-                    stream=False,
-                )
-                content = resp.choices[0].message.content or ""
-                console.print(content)
-                history.append({"role": "assistant", "content": content})
-            except Exception as e:  # noqa: BLE001
-                console.print(f"\n[red]Error from model endpoint:[/red] {e}")
+            # Completions API (build sequential transcript or prompt)
+            history.append({"role": "user", "content": user_input})
+            prompt_parts: list[str] = []
+            for item in history:
+                role = item["role"]
+                cnt = item["content"]
+                if role == "system":
+                    prompt_parts.append(f"{cnt}\n")
+                elif role == "user":
+                    prompt_parts.append(f"User: {cnt}\nAssistant: ")
+                elif role == "assistant":
+                    prompt_parts.append(f"{cnt}\n")
+            session_prompt = "".join(prompt_parts)
+
+            console.print("[bold green]Model > [/bold green]", end="")
+            if stream:
+                collected_chunks: list[str] = []
+                try:
+                    comp_stream = client.completions.create(
+                        model=resolved_model,
+                        prompt=session_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        top_p=top_p,
+                        stop=["\nUser:", "\nAssistant:", "\n\nUser:"],
+                        stream=True,
+                    )
+                    for chunk in comp_stream:
+                        if chunk.choices and chunk.choices[0].text:
+                            text = chunk.choices[0].text
+                            console.print(text, end="")
+                            collected_chunks.append(text)
+                    console.print()
+                    assistant_reply = "".join(collected_chunks).strip()
+                    history.append({"role": "assistant", "content": assistant_reply})
+                except Exception as e:  # noqa: BLE001
+                    console.print(f"\n[red]Error from model endpoint:[/red] {e}")
+            else:
+                try:
+                    resp = client.completions.create(
+                        model=resolved_model,
+                        prompt=session_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        top_p=top_p,
+                        stop=["\nUser:", "\nAssistant:", "\n\nUser:"],
+                        stream=False,
+                    )
+                    content = (
+                        resp.choices[0].text if resp.choices else ""
+                    ) or ""
+                    console.print(content)
+                    history.append({"role": "assistant", "content": content.strip()})
+                except Exception as e:  # noqa: BLE001
+                    console.print(f"\n[red]Error from model endpoint:[/red] {e}")

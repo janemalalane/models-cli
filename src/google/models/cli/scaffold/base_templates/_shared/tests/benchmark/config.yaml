@@ -1,10 +1,10 @@
 # inference-perf Benchmark Configuration
 # Note: Server endpoint and model are dynamically injected from .env or CLI options.
 api:
-  type: chat
+  type: completion
   streaming: true
 data:
-  type: synthetic #TODO: change to sharegpt by default
+  type: shareGPT 
   input_distribution:
     min: 10
     max: 1024

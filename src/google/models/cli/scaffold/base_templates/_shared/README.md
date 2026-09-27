@@ -1,6 +1,6 @@
 # {project_name}
 
-Open-weights GenAI Model Serving, Deployment & Benchmarking workspace for **{model_id}** on **Gemini Enterprise Agent Platform (GEAP) / Vertex AI**.
+Open-weights GenAI Model Serving, Deployment & Benchmarking workspace for **{model_id}** on **Gemini Enterprise**.
 
 ---
 
@@ -21,16 +21,16 @@ models-cli eval --models "{model_id},google/gemma-2-27b-it"
 ### 3. Recommend Hardware & Engine Parameters
 Get zero-shot hardware recommendations optimized for TTFT, TPOT, throughput, or cost:
 ```bash
-models-cli recommend --model {model_id} --objective ttft
+models-cli recommend --model {model_id} --sort-by cost
 ```
 
-### 4. Deploy to GEAP / Vertex AI Online Endpoint
-Deploy the model container to a dedicated GEAP prediction endpoint:
+### 4. Deploy to Gemini Enterprise Online Prediction
+Deploy the model container to a dedicated Gemini Enterprise Online Prediction endpoint:
 ```bash
 # Dry run to verify deployment manifests
 models-cli deploy --dry-run
 
-# Execute deployment to Vertex AI
+# Execute deployment to Gemini Enterprise Online Prediction
 models-cli deploy
 ```
 

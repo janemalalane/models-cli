@@ -19,33 +19,31 @@ from google.models.cli.common.constants import InferenceEngine
 
 def test_deployment_config_defaults():
     cfg = DeploymentConfig()
-    assert cfg.engine == "vllm"
-    assert cfg.engine_enum == InferenceEngine.VLLM
     assert cfg.machine_type is None
     assert cfg.service_account is None
     assert cfg.dedicated_endpoint is True
     assert cfg.routes == {"predict": "/*", "health": "/health"}
-    assert cfg.shared_memory_mb == 65536
+    assert cfg.shared_memory_mb == 131072
 
 
 def test_deployment_config_from_dict_flat():
     data = {
         "display_name": "my-endpoint",
-        "engine": "sglang",
         "machine_type": "ct6e-standard-4t",
-        "accelerator_type": "TPU_V6E",
-        "accelerator_count": 4,
+        "container_image_uri": "us-docker.pkg.dev/my-proj/custom-vllm:latest",
         "service_account": "custom-sa@my-proj.iam.gserviceaccount.com",
-        "dedicated_endpoint": True,
-        "routes": {"predict": "/v1/chat/completions", "health": "/ready"},
+        "dedicated_endpoint": False,
+        "shared_memory_mb": 65536,
+        "routes": {"predict": "/v1/chat/completions", "health": "/ready", "port": 8000},
     }
     cfg = DeploymentConfig.from_dict(data)
     assert cfg.display_name == "my-endpoint"
-    assert cfg.engine == "sglang"
-    assert cfg.engine_enum == InferenceEngine.SGLANG
     assert cfg.machine_type == "ct6e-standard-4t"
+    assert cfg.container_image_uri == "us-docker.pkg.dev/my-proj/custom-vllm:latest"
     assert cfg.service_account == "custom-sa@my-proj.iam.gserviceaccount.com"
-    assert cfg.routes == {"predict": "/v1/chat/completions", "health": "/ready"}
+    assert cfg.dedicated_endpoint is False
+    assert cfg.shared_memory_mb == 65536
+    assert cfg.routes == {"predict": "/v1/chat/completions", "health": "/ready", "port": 8000}
 
 
 def test_deployment_config_malformed_raises_click_exception():
@@ -59,11 +57,8 @@ def test_vllm_engine_config_defaults():
     assert cfg.engine_enum == InferenceEngine.VLLM
     assert cfg.tensor_parallel_size == 1
     assert cfg.gpu_memory_utilization == 0.90
-    assert cfg.port == 8080
-    assert cfg.host == "0.0.0.0"
     params = cfg.to_engine_params()
     assert params["tensor_parallel_size"] == 1
-    assert params["host"] == "0.0.0.0"
     assert "extra_params" not in params
 
 
@@ -100,7 +95,6 @@ def test_read_deployment_and_engine_config_from_dir():
             yaml.dump(
                 {
                     "display_name": "test-project-endpoint",
-                    "engine": "sglang",
                     "machine_type": "g4-standard-48",
                 }
             )
@@ -122,8 +116,6 @@ def test_read_deployment_and_engine_config_from_dir():
         # Test readers
         deploy_cfg = read_deployment_config(tmp_path)
         assert deploy_cfg.display_name == "test-project-endpoint"
-        assert deploy_cfg.engine == "sglang"
-        assert deploy_cfg.engine_enum == InferenceEngine.SGLANG
         assert deploy_cfg.machine_type == "g4-standard-48"
 
         engine_cfg = read_engine_config(tmp_path)

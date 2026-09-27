@@ -1,180 +1,176 @@
 # models-cli (`google-models-cli`)
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![uv](https://img.shields.io/badge/uv-enabled-brightgreen.svg)](https://github.com/astral-sh/uv)
 
-A formal command-line interface toolchain to evaluate, optimize, deploy, and benchmark open-weights GenAI models (Gemma, Llama, GLM, etc.) on **Google Cloud (Gemini Enterprise Agent Platform / Vertex AI)**.
-
-Structured following the architectural design of [`google/agents-cli`](https://github.com/google/agents-cli).
+A developer-first CLI toolchain to evaluate, optimize, deploy, chat with, and benchmark open-weights GenAI models (Gemma, Llama, Qwen, DeepSeek, etc.) on **Google Cloud (Gemini Enterprise)** using **vLLM** and **SGLang**.
 
 ---
 
-## Key Features
+## Installation
 
-- 🏗️ **`models-cli create`**: Interactive and automated project scaffolding for open model serving workspaces with unified evaluation, benchmarking, and engine configs.
-- ⚡ **`models-cli recommend`**: Zero-shot hardware configuration and vLLM / SGLang parameter recommendations optimized for TTFT, TPOT, throughput, or hourly budget across Google Cloud GPUs (L4, G4, A100) and TPUs (v5e, Trillium v6e).
-- 🚀 **`models-cli deploy`**: Seamless model registration and online prediction endpoint provisioning on Vertex AI / GEAP with pre-built Google vLLM / SGLang containers or custom images, with `--dry-run` validation.
-- 📊 **`models-cli benchmark`**: Automated performance load testing using `inference-perf`, parsing per-request lifecycle metrics (TTFT, TPOT, goodput), and generating executive Markdown reports.
-- 🔍 **`models-cli eval`**: Multi-model response accuracy & quality evaluation against golden test datasets, ranking the winning model and syncing project configurations.
-
----
-
-## Quickstart: End-to-End Walkthrough
-
-Here is how to evaluate, configure, deploy, and benchmark a real-world open-weights service — **`bedtime-story-writer`** — using Google Cloud Vertex AI / Gemini Enterprise Agent Platform.
-
-### 1. Installation
-
-Run `models-cli` directly with **`uvx`**:
+### Ephemeral execution (no install needed)
+Run directly via `uvx` pointing to the repository:
 ```bash
-uvx google-models-cli --help
+uvx --from "git+https://github.com/janemalalane/models-cli.git" models-cli --help
 ```
 
-Or install in your local environment with **`uv`**:
+### Install as a global tool
+Install permanently in your shell:
 ```bash
+uv tool install "git+https://github.com/janemalalane/models-cli.git"
+models-cli --help
+```
+
+### Local development
+```bash
+git clone https://github.com/janemalalane/models-cli.git
+cd models-cli
 uv sync --all-extras
 uv run models-cli --help
 ```
 
-### 2. Scaffold the Project
+> **Aliases:** Both `models-cli` and `models` are available.
 
-Create a new model serving and benchmarking workspace for `bedtime-story-writer`:
+---
+
+## Core Commands Overview
+
+| Command | Purpose | Key Flags |
+|---|---|---|
+| [`info`](#diagnostics-models-cli-info) | Check active GCP project, credentials, and configuration | — |
+| [`create`](#1-scaffold-a-serving-project-models-cli-create) | Scaffold a new model-serving project with configs & recipes | `-i/--interactive`, `-t/--template`, `-m/--model`, `-y/--yes` |
+| [`eval`](#2-evaluate-candidate-models-models-cli-eval) | Evaluate model quality against golden datasets & pick a winner | `-m/--models`, `-d/--dataset`, `--set-winner`, `--mock` |
+| [`recommend`](#3-hardware-recommendations-models-cli-recommend) | Zero-shot GPU/TPU & engine tuning recommendations via GKE Recommender | `-m/--model`, `-u/--use-case`, `-f/--family`, `-s/--sort-by` |
+| [`deploy`](#4-deploy-to-gemini-enterprise-online-prediction-models-cli-deploy) | Deploy to Gemini Enterprise Online Prediction endpoint, check status, or watch | `--dry-run`, `--status`, `-w/--watch`, `-b/--bucket` |
+| [`playground`](#5-test-endpoints-interactively-models-cli-playground) | Interactive streaming chat or prompt testing with deployed models | `-m/--message`, `-s/--system`, `-e/--endpoint`, `--raw` |
+| [`benchmark`](#6-benchmark-performance-models-cli-benchmark) | Measure TTFT, TPOT, & throughput using `inference-perf` | `-e/--endpoint`, `-c/--config`, `--mock` |
+
+---
+
+## Workflow Guide
+
+### Diagnostics: `models-cli info`
+Inspect resolved GCP project, credentials, active region, and model settings:
 ```bash
-# Non-interactive quickstart (defaults to Google Gemma 4 on vLLM)
-models-cli create bedtime-story-writer --model google/gemma-4-31B-it -y
+models-cli info
+```
 
-# Move into the project directory
+---
+
+### 1. Scaffold a Serving Project: `models-cli create`
+Generate a workspace with serving configs (`engine_config.yaml`, `deployment_spec.yaml`), golden evaluation sets, and benchmark configs:
+```bash
+# Interactive setup (prompts for model, engine, GCP region, bucket, etc.)
+models-cli create -i
+
+# Quickstart non-interactive (defaults to vLLM on Google Gemma)
+models-cli create bedtime-story-writer --model google/gemma-4-31B-it -y
 cd bedtime-story-writer
 ```
 
-### 3. Evaluate Candidate Models
+---
 
-Evaluate candidate open-weights models against your bedtime story golden test dataset (`tests/eval/golden_dataset.jsonl`) to select the best performer:
+### 2. Evaluate Candidate Models: `models-cli eval`
+Score multiple open-weights models on task-specific test cases before selecting hardware:
 ```bash
-# Evaluate models and automatically set the winner in project configs
+# Compare candidate models on golden dataset & persist the winner to project configs
 models-cli eval --models "google/gemma-4-31B-it,google/gemma-2-27b-it" --set-winner
 
-# Or run in mock mode for offline testing / CI
+# Offline mock evaluation (useful for CI/CD checks)
 models-cli eval --models "google/gemma-4-31B-it,google/gemma-2-27b-it" --mock
 ```
 
-### 4. Zero-Shot Hardware Recommendation
+---
 
-Get optimal accelerator and engine parameters tailored for low Time to First Token (TTFT) or minimum hourly cost:
+### 3. Hardware Recommendations: `models-cli recommend`
+Query the Google Cloud GKE Recommender for optimized accelerator configurations (TPU v5e/v6e, NVIDIA L4/A100) and engine parameters:
 ```bash
-# Optimize for lowest TTFT on Google Cloud TPUs
-models-cli recommend --model google/gemma-4-31B-it --objective ttft --family tpu
+# Find lowest hourly cost setup for Gemma
+models-cli recommend --model google/gemma-4-31B-it --sort-by cost
 
-# Or optimize for lowest cost across all accelerator types
-models-cli recommend --model google/gemma-4-31B-it --objective cost
+# Target low Time to First Token (TTFT) on Google TPUs
+models-cli recommend --model google/gemma-4-31B-it --family tpu --sort-by ttft
+
+# Tailor for specific traffic patterns (e.g. summarization, chatbot, code-completion)
+models-cli recommend --model google/gemma-4-31B-it --use-case summarization
+
+# Apply recommendations interactively directly to deployment_spec.yaml
+models-cli recommend --model google/gemma-4-31B-it --apply
 ```
 
-### 5. Deploy to Vertex AI / GEAP Online Endpoint
+---
 
-Validate your deployment manifest, then provision a dedicated online prediction endpoint on Google Cloud:
+### 4. Deploy to Gemini Enterprise Online Prediction: `models-cli deploy`
+Register model artifacts and deploy container instances to a Gemini Enterprise Online Prediction dedicated endpoint:
 ```bash
-# Validate manifests without executing cloud calls
+# 1. Validate configuration and manifest without cloud calls
 models-cli deploy --dry-run
 
-# Deploy to live Vertex AI / GEAP endpoint
+# 2. Deploy to Gemini Enterprise Online Prediction (asynchronous by default, tracks operation in metadata)
 models-cli deploy
+
+# 3. Check status of current or specific long-running deployment
+models-cli deploy --status
+
+# 4. Stream status and live logs until endpoint deployment is active
+models-cli deploy --status --watch
 ```
 
-### 6. Benchmark Serving Performance
+---
 
-Execute load tests with `inference-perf` to measure TTFT, TPOT, and throughput curves, generating markdown reports in `reports/`:
+### 5. Test Endpoints Interactively: `models-cli playground`
+Chat directly with your deployed endpoint using the OpenAI-compatible Chat Completions API with streaming and reasoning token support:
 ```bash
-# Run simulated benchmark against mock server
-models-cli benchmark --mock
+# Launch interactive multi-turn chat session (auto-discovers deployed endpoint)
+models-cli playground
 
-# Run live benchmark against deployed endpoint
+# Send a single quick query
+models-cli playground "Tell me a bedtime story about a curious robotic fox."
+
+# Custom system prompt with explicit endpoint
+models-cli playground -m "Summarize this log" -s "You are an SRE assistant." -e <ENDPOINT_ID>
+```
+
+---
+
+### 6. Benchmark Performance: `models-cli benchmark`
+Execute production-grade load tests with `inference-perf` to profile TTFT, TPOT, and concurrency curves:
+```bash
+
+# Run live benchmark against your active deployed endpoint
 models-cli benchmark
+
+# Benchmark with a custom endpoint and load profile
+models-cli benchmark --endpoint "https://<ENDPOINT_DNS>/v1" --config tests/benchmark/config.yaml
 ```
+Markdown executive summaries and metric distributions are automatically written to `reports/`.
 
 ---
 
-## CLI Command Reference
+## Workspace Structure
 
-### 1. Project Scaffolding
-Create a new self-contained model serving and benchmarking project:
-```bash
-# Interactive mode (prompts for project name, model, engine, region, and verifies GCP credentials)
-models-cli create
-
-# Quickstart non-interactive mode
-models-cli create bedtime-story-writer --model google/gemma-4-31B-it -y
-```
-
-### 2. Zero-Shot Hardware Recommendation
-Find the optimal accelerator and engine parameters for your model:
-```bash
-# Optimize for lowest hourly cost
-models-cli recommend --model google/gemma-4-31B-it --objective cost
-
-# Optimize for lowest Time to First Token (TTFT) on TPUs
-models-cli recommend --model google/gemma-4-31B-it --objective ttft --family tpu
-
-# Output structured JSON for automation
-models-cli recommend --model google/gemma-4-31B-it --format json
-```
-
-### 3. Model Response Quality Evaluation
-Evaluate candidate open models on a golden test dataset before deployment:
-```bash
-# Evaluate models and select the winner
-models-cli eval --models "google/gemma-4-31B-it,google/gemma-2-27b-it"
-
-# Mock evaluation for offline testing / CI
-models-cli eval --models "google/gemma-4-31B-it,google/gemma-2-27b-it" --mock
-```
-
-### 4. Deploy to Vertex AI / GEAP Online Endpoint
-Deploy model container to a dedicated GEAP prediction endpoint:
-```bash
-# Validate manifests without executing cloud calls
-models-cli deploy --model-id gemma-31b --machine-type ct6e-standard-4t --dry-run
-
-# Deploy to live Vertex AI endpoint
-models-cli deploy --model-id gemma-31b --machine-type ct6e-standard-4t
-```
-
-### 5. Performance Benchmarking
-Execute load tests and measure latency curves with `inference-perf`:
-```bash
-# Run simulated benchmark against mock server
-models-cli benchmark --mock
-
-# Run live benchmark against deployed endpoint
-models-cli benchmark --endpoint "https://us-central1-aiplatform.googleapis.com/v1/..."
-```
-
----
-
-## Project Structure
+When you scaffold a project (`models-cli create`), the resulting directory structure is:
 
 ```text
-bedtime-story-writer/
-├── README.md                      # Quickstart and command instructions
+my-service/
+├── README.md                      # Service setup and quickstart
 ├── pyproject.toml                 # uv project dependencies
-├── .env.example                   # GCP and HuggingFace environment variables
+├── .env.example                   # GCP and Hugging Face environment variables
 │
-├── config/                        # Model & engine runtime configurations
-│   ├── engine_config.yaml         # Engine parameters (vLLM / SGLang settings)
-│   └── deployment_spec.yaml       # Hardware & container deployment specification
+├── config/
+│   ├── engine_config.yaml         # vLLM / SGLang serving flags (e.g. max_model_len, tensor_parallel)
+│   └── deployment_spec.yaml       # Hardware (machine type, accelerators) & container spec
 │
-├── deploy/                        # Container recipes (for custom image builds)
-│   ├── Dockerfile                 # Custom container build recipe
-│   └── entrypoint.sh              # Container entrypoint script
+├── tests/
+│   ├── eval/
+│   │   └── golden_dataset.jsonl   # Task-specific prompt / ground-truth pairs
+│   └── benchmark/
+│       ├── config.yaml            # inference-perf traffic distribution & concurrency targets
+│       └── prompts.jsonl          # Benchmark test dataset
 │
-├── tests/                         # Unified evaluation & benchmark test suite
-│   ├── eval/                      # Response quality & accuracy evaluation
-│   │   └── golden_dataset.jsonl   # Test dataset with expected inputs/outputs
-│   └── benchmark/                 # Performance & load testing
-│       ├── config.yaml            # inference-perf traffic/protocol configuration
-│       └── prompts.jsonl          # Load test prompt distribution
-│
-└── reports/                       # Generated benchmark results, plots, and eval reports
+└── reports/                       # Generated benchmark analyses, eval rankings, and charts
 ```
 
 ---

@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 import click
 from dotenv import set_key
 import yaml
@@ -33,6 +33,7 @@ from google.models.cli.common.constants import (
     DEFAULT_HEALTH_ROUTE,
     DEFAULT_KV_CACHE_DTYPE,
     DEFAULT_MAX_MODEL_LEN,
+    DEFAULT_MAX_NUM_SEQS,
     DEFAULT_PREDICTION_ROUTE,
     DEFAULT_SHARED_MEMORY_MB,
     DEFAULT_TENSOR_PARALLEL_SIZE,
@@ -49,25 +50,12 @@ class DeploymentConfig:
     """Configuration derived from deployment_spec.yaml."""
 
     display_name: str = ""
-    engine: str = DEFAULT_ENGINE
     machine_type: Optional[str] = None
-    accelerator_type: Optional[str] = None
-    accelerator_count: Optional[int] = None
-    container_image_uri: Optional[str] = None
+    container_image_uri: str = ""
     service_account: Optional[str] = None
     dedicated_endpoint: bool = True
     shared_memory_mb: int = DEFAULT_SHARED_MEMORY_MB
     routes: dict[str, str] = field(default_factory=_default_routes)
-
-    @property
-    def engine_enum(self) -> Optional[InferenceEngine]:
-        """Resolves engine string to an InferenceEngine enum if valid."""
-        if not self.engine:
-            return None
-        try:
-            return InferenceEngine(self.engine.lower().strip())
-        except ValueError:
-            return None
 
     @classmethod
     def from_dict(
@@ -81,17 +69,16 @@ class DeploymentConfig:
 
         cfg = cls()
         cfg.display_name = data.get("display_name", cfg.display_name)
-        cfg.engine = data.get("engine", cfg.engine)
         cfg.machine_type = data.get("machine_type", cfg.machine_type)
-        cfg.accelerator_type = data.get("accelerator_type", cfg.accelerator_type)
-        cfg.accelerator_count = data.get("accelerator_count", cfg.accelerator_count)
         cfg.container_image_uri = data.get(
             "container_image_uri", cfg.container_image_uri
         )
         cfg.service_account = data.get("service_account", cfg.service_account)
-        cfg.dedicated_endpoint = data.get("dedicated_endpoint", cfg.dedicated_endpoint)
         cfg.shared_memory_mb = data.get("shared_memory_mb", cfg.shared_memory_mb)
-        cfg.routes = data.get("routes") or cfg.routes
+        if "dedicated_endpoint" in data:
+            cfg.dedicated_endpoint = bool(data["dedicated_endpoint"])
+        if "routes" in data and isinstance(data["routes"], Mapping):
+            cfg.routes = {**cfg.routes, **data["routes"]}
 
         return cfg
 
@@ -106,12 +93,13 @@ class VLLMEngineConfig:
     gpu_memory_utilization: float = DEFAULT_GPU_MEMORY_UTILIZATION
     kv_cache_dtype: str = DEFAULT_KV_CACHE_DTYPE
     max_model_len: int = DEFAULT_MAX_MODEL_LEN
-    max_num_seqs: int = 256
+    max_num_seqs: int = DEFAULT_MAX_NUM_SEQS
     max_num_batched_tokens: int = 2048
     enable_prefix_caching: bool = True
     enable_chunked_prefill: bool = True
     host: str = DEFAULT_CONTAINER_HOST
     port: int = DEFAULT_CONTAINER_PORT
+    raw_config: dict[str, Any] = field(default_factory=dict)
 
     @property
     def engine_enum(self) -> InferenceEngine:
@@ -128,35 +116,17 @@ class VLLMEngineConfig:
             raise click.ClickException(f"malformed {filename}")
 
         cfg = cls()
-        cfg.engine = data.get("engine", cfg.engine)
-        cfg.tensor_parallel_size = data.get(
-            "tensor_parallel_size", cfg.tensor_parallel_size
-        )
-        cfg.pipeline_parallel_size = data.get(
-            "pipeline_parallel_size", cfg.pipeline_parallel_size
-        )
-        cfg.gpu_memory_utilization = data.get(
-            "gpu_memory_utilization", cfg.gpu_memory_utilization
-        )
-        cfg.kv_cache_dtype = data.get("kv_cache_dtype", cfg.kv_cache_dtype)
-        cfg.max_model_len = data.get("max_model_len", cfg.max_model_len)
-        cfg.max_num_seqs = data.get("max_num_seqs", cfg.max_num_seqs)
-        cfg.max_num_batched_tokens = data.get(
-            "max_num_batched_tokens", cfg.max_num_batched_tokens
-        )
-        cfg.enable_prefix_caching = data.get(
-            "enable_prefix_caching", cfg.enable_prefix_caching
-        )
-        cfg.enable_chunked_prefill = data.get(
-            "enable_chunked_prefill", cfg.enable_chunked_prefill
-        )
-        cfg.host = data.get("host", cfg.host)
-        cfg.port = data.get("port", cfg.port)
+        cfg.raw_config = dict(data)
+        for key, val in data.items():
+            if hasattr(cfg, key):
+                setattr(cfg, key, val)
+        if "port" in data:
+            cfg.port = int(data["port"])
         return cfg
 
     def to_engine_params(self) -> dict[str, Any]:
         """Returns engine parameters dictionary for container entrypoints."""
-        return {
+        params = {
             "tensor_parallel_size": self.tensor_parallel_size,
             "pipeline_parallel_size": self.pipeline_parallel_size,
             "gpu_memory_utilization": self.gpu_memory_utilization,
@@ -169,6 +139,15 @@ class VLLMEngineConfig:
             "host": self.host,
             "port": self.port,
         }
+        for k, v in self.raw_config.items():
+            if k not in ("engine", "raw_config"):
+                params[k] = v
+        return params
+
+    def __getattr__(self, name: str) -> Any:
+        if name != "raw_config" and "raw_config" in self.__dict__ and name in self.raw_config:
+            return self.raw_config[name]
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
 
 @dataclass
@@ -181,6 +160,7 @@ class SGLangEngineConfig:
     context_length: int = DEFAULT_MAX_MODEL_LEN
     host: str = DEFAULT_CONTAINER_HOST
     port: int = DEFAULT_CONTAINER_PORT
+    raw_config: dict[str, Any] = field(default_factory=dict)
 
     @property
     def engine_enum(self) -> InferenceEngine:
@@ -197,25 +177,32 @@ class SGLangEngineConfig:
             raise click.ClickException(f"malformed {filename}")
 
         cfg = cls()
-        cfg.engine = data.get("engine", cfg.engine)
-        cfg.tp_size = data.get("tp_size", cfg.tp_size)
-        cfg.mem_fraction_static = data.get(
-            "mem_fraction_static", cfg.mem_fraction_static
-        )
-        cfg.context_length = data.get("context_length", cfg.context_length)
-        cfg.host = data.get("host", cfg.host)
-        cfg.port = data.get("port", cfg.port)
+        cfg.raw_config = dict(data)
+        for key, val in data.items():
+            if hasattr(cfg, key):
+                setattr(cfg, key, val)
+        if "port" in data:
+            cfg.port = int(data["port"])
         return cfg
 
     def to_engine_params(self) -> dict[str, Any]:
         """Returns engine parameters dictionary for container entrypoints."""
-        return {
+        params = {
             "tp_size": self.tp_size,
             "mem_fraction_static": self.mem_fraction_static,
             "context_length": self.context_length,
             "host": self.host,
             "port": self.port,
         }
+        for k, v in self.raw_config.items():
+            if k not in ("engine", "raw_config"):
+                params[k] = v
+        return params
+
+    def __getattr__(self, name: str) -> Any:
+        if name != "raw_config" and "raw_config" in self.__dict__ and name in self.raw_config:
+            return self.raw_config[name]
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
 
 EngineConfig = VLLMEngineConfig | SGLangEngineConfig
