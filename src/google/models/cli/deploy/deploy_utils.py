@@ -14,6 +14,7 @@
 
 """Deployment utilities for Gemini Enterprise Online Prediction model registration and endpoint provisioning."""
 
+import json
 import re
 import shutil
 import sys
@@ -28,6 +29,7 @@ from google.protobuf.json_format import MessageToDict
 
 from google.models.cli._gcp_project import get_gcp_project_number
 from google.models.cli.common.constants import (
+    DEFAULT_CONTAINER_DEPLOYMENT_TIMEOUT,
     DEFAULT_CONTAINER_HOST,
     DEFAULT_CONTAINER_PORT,
     DEFAULT_GPU_MEMORY_UTILIZATION,
@@ -37,6 +39,7 @@ from google.models.cli.common.constants import (
     DEFAULT_PREDICTION_ROUTE,
     DEFAULT_SHARED_MEMORY_MB,
     DEFAULT_TENSOR_PARALLEL_SIZE,
+    DEFAULT_UPLOAD_REQUEST_TIMEOUT,
     HARDWARE_SPECS,
     InferenceEngine,
 )
@@ -290,7 +293,9 @@ def deploy_model_to_geap(
     hardware_spec = HARDWARE_SPECS.get(machine_type, {})
 
     if not hardware_spec:
-        raise click.ClickException(f"Unsupported machine type on Gemini Enterprise Online Prediction: {machine_type}")
+        raise click.ClickException(
+            f"Unsupported machine type on Gemini Enterprise Online Prediction: {machine_type}"
+        )
 
     raw_accelerator_type = hardware_spec.get("accelerator_type")
     accelerator_type = (
@@ -313,10 +318,12 @@ def deploy_model_to_geap(
     resolved_routes = {
         "predict": user_routes.get("predict") or DEFAULT_PREDICTION_ROUTE,
         "health": user_routes.get("health") or DEFAULT_HEALTH_ROUTE,
-        "port": int(user_routes.get("port") or getattr(cfg, "port", DEFAULT_CONTAINER_PORT)),
+        "port": int(
+            user_routes.get("port") or getattr(cfg, "port", DEFAULT_CONTAINER_PORT)
+        ),
     }
 
-    manifest = {
+    manifest: dict[str, Any] = {
         "project": project_id,
         "location": location,
         "model_display_name": model_display_name,
@@ -328,19 +335,26 @@ def deploy_model_to_geap(
         "container_args": container_args,
         "container_env_vars": env_vars,
         "machine_type": machine_type,
-        "accelerator_type": accelerator_type,
-        "accelerator_count": accelerator_count,
-        "service_account": resolved_service_account,
-        "routes": resolved_routes,
-        "shared_memory_mb": resolved_shared_memory_mb,
-        "dry_run": dry_run,
     }
+    if accelerator_type:
+        manifest["accelerator_type"] = accelerator_type
+        manifest["accelerator_count"] = accelerator_count
+    if service_account_email:
+        manifest["service_account"] = service_account_email
+    default_routes = {
+        "predict": DEFAULT_PREDICTION_ROUTE,
+        "health": DEFAULT_HEALTH_ROUTE,
+    }
+    if routes and routes != default_routes:
+        manifest["routes"] = resolved_routes
+    if shared_memory_mb and shared_memory_mb != DEFAULT_SHARED_MEMORY_MB:
+        manifest["shared_memory_mb"] = shared_memory_mb
 
     if dry_run:
         return {
             "status": "DRY_RUN",
             "endpoint_resource_name": f"projects/{project_id}/locations/{location}/endpoints/simulated-endpoint-123",
-            "endpoint_url": f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/simulated-endpoint-123",
+            "endpoint_url": f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/simulated-endpoint-123/invoke/v1",
             "manifest": manifest,
         }
 
@@ -350,13 +364,24 @@ def deploy_model_to_geap(
     model = None
 
     try:
+        from google.api_core.future import polling
+
+        # Override GAPIC default 900s polling timeout for long-running operations so
+        # large model uploads/imports do not time out after 15 minutes during Model.upload.
+        if hasattr(polling.DEFAULT_POLLING, "_timeout"):
+            polling.DEFAULT_POLLING._timeout = max(
+                getattr(polling.DEFAULT_POLLING, "_timeout", 900),
+                DEFAULT_UPLOAD_REQUEST_TIMEOUT,
+            )
+
         model = aiplatform.Model.upload(
             artifact_uri=model_uri,
             display_name=model_display_name,
             serving_container_image_uri=resolved_container_image_uri,
             serving_container_args=container_args,
             serving_container_environment_variables=env_vars,
-            serving_container_deployment_timeout=3600,
+            upload_request_timeout=DEFAULT_UPLOAD_REQUEST_TIMEOUT,
+            serving_container_deployment_timeout=DEFAULT_CONTAINER_DEPLOYMENT_TIMEOUT,
             serving_container_invoke_route_prefix=resolved_routes["predict"],
             serving_container_health_route=resolved_routes["health"],
             serving_container_ports=[resolved_routes["port"]],
@@ -459,9 +484,9 @@ def deploy_model_to_geap(
                 )
 
     if dedicated_dns:
-        endpoint_url = f"https://{dedicated_dns}/v1/{endpoint.resource_name}/invoke"
+        endpoint_url = f"https://{dedicated_dns}/v1/{endpoint.resource_name}/invoke/v1"
     else:
-        endpoint_url = f"https://{location}-aiplatform.googleapis.com/v1/{endpoint.resource_name}/invoke"
+        endpoint_url = f"https://{location}-aiplatform.googleapis.com/v1/{endpoint.resource_name}/invoke/v1"
 
     return {
         "status": "DEPLOYED",

@@ -56,6 +56,7 @@ class DeploymentConfig:
     dedicated_endpoint: bool = True
     shared_memory_mb: int = DEFAULT_SHARED_MEMORY_MB
     routes: dict[str, str] = field(default_factory=_default_routes)
+    raw_config: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(
@@ -68,6 +69,7 @@ class DeploymentConfig:
             raise click.ClickException(f"malformed {filename}")
 
         cfg = cls()
+        cfg.raw_config = dict(data)
         cfg.display_name = data.get("display_name", cfg.display_name)
         cfg.machine_type = data.get("machine_type", cfg.machine_type)
         cfg.container_image_uri = data.get(
@@ -126,22 +128,16 @@ class VLLMEngineConfig:
 
     def to_engine_params(self) -> dict[str, Any]:
         """Returns engine parameters dictionary for container entrypoints."""
-        params = {
-            "tensor_parallel_size": self.tensor_parallel_size,
-            "pipeline_parallel_size": self.pipeline_parallel_size,
-            "gpu_memory_utilization": self.gpu_memory_utilization,
-            "kv_cache_dtype": self.kv_cache_dtype,
-            "max_model_len": self.max_model_len,
-            "max_num_seqs": self.max_num_seqs,
-            "max_num_batched_tokens": self.max_num_batched_tokens,
-            "enable_prefix_caching": self.enable_prefix_caching,
-            "enable_chunked_prefill": self.enable_chunked_prefill,
-            "host": self.host,
-            "port": self.port,
-        }
-        for k, v in self.raw_config.items():
-            if k not in ("engine", "raw_config"):
-                params[k] = v
+        if self.raw_config:
+            params = {}
+            for k, v in self.raw_config.items():
+                if k not in ("engine", "raw_config") and v is not None:
+                    params[k] = v
+            return params
+
+        params = {"tensor_parallel_size": self.tensor_parallel_size}
+        if self.pipeline_parallel_size != 1:
+            params["pipeline_parallel_size"] = self.pipeline_parallel_size
         return params
 
     def __getattr__(self, name: str) -> Any:
@@ -187,17 +183,14 @@ class SGLangEngineConfig:
 
     def to_engine_params(self) -> dict[str, Any]:
         """Returns engine parameters dictionary for container entrypoints."""
-        params = {
-            "tp_size": self.tp_size,
-            "mem_fraction_static": self.mem_fraction_static,
-            "context_length": self.context_length,
-            "host": self.host,
-            "port": self.port,
-        }
-        for k, v in self.raw_config.items():
-            if k not in ("engine", "raw_config"):
-                params[k] = v
-        return params
+        if self.raw_config:
+            params = {}
+            for k, v in self.raw_config.items():
+                if k not in ("engine", "raw_config") and v is not None:
+                    params[k] = v
+            return params
+
+        return {"tp_size": self.tp_size}
 
     def __getattr__(self, name: str) -> Any:
         if name != "raw_config" and "raw_config" in self.__dict__ and name in self.raw_config:

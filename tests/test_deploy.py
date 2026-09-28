@@ -1,6 +1,10 @@
 import click
 from click.testing import CliRunner
-from google.models.cli.common.constants import InferenceEngine
+from google.models.cli.common.constants import (
+    DEFAULT_CONTAINER_DEPLOYMENT_TIMEOUT,
+    DEFAULT_UPLOAD_REQUEST_TIMEOUT,
+    InferenceEngine,
+)
 from google.models.cli._project import DeploymentConfig
 from google.models.cli.deploy.deploy_utils import (
     build_container_args,
@@ -161,6 +165,8 @@ def test_deploy_model_upload_and_create_use_custom_spec(monkeypatch):
     fake_endpoint = MagicMock()
     fake_endpoint.resource_name = "projects/123/locations/us-central1/endpoints/789"
     fake_endpoint.dedicated_endpoint_enabled = False
+    fake_endpoint.dedicated_endpoint_dns = None
+    fake_endpoint.gca_resource = None
 
     mock_client = MagicMock()
     mock_future = MagicMock()
@@ -202,8 +208,56 @@ def test_deploy_model_upload_and_create_use_custom_spec(monkeypatch):
     assert uploaded_kwargs["serving_container_invoke_route_prefix"] == "/v1/chat/completions"
     assert uploaded_kwargs["serving_container_health_route"] == "/ready"
     assert uploaded_kwargs["serving_container_ports"] == [8000]
+    assert uploaded_kwargs["upload_request_timeout"] == DEFAULT_UPLOAD_REQUEST_TIMEOUT
+    assert (
+        uploaded_kwargs["serving_container_deployment_timeout"]
+        == DEFAULT_CONTAINER_DEPLOYMENT_TIMEOUT
+    )
+    from google.api_core.future import polling
+
+    assert polling.DEFAULT_POLLING._timeout == DEFAULT_UPLOAD_REQUEST_TIMEOUT
     assert created_endpoint_kwargs["display_name"] == "custom-endpoint-display"
     assert created_endpoint_kwargs["dedicated_endpoint_enabled"] is False
+    assert result["endpoint_url"] == "https://us-central1-aiplatform.googleapis.com/v1/projects/123/locations/us-central1/endpoints/789/invoke/v1"
+
+
+def test_deploy_model_endpoint_url_dedicated(monkeypatch):
+    from unittest.mock import MagicMock
+    from google.cloud import aiplatform, aiplatform_v1
+
+    fake_model = MagicMock()
+    fake_model.resource_name = "projects/555587849335/locations/us-central1/models/456"
+    fake_endpoint = MagicMock()
+    fake_endpoint.resource_name = "projects/555587849335/locations/us-central1/endpoints/5862688908034179072"
+    fake_endpoint.dedicated_endpoint_enabled = True
+    fake_endpoint.dedicated_endpoint_dns = "5862688908034179072.us-central1-555587849335.prediction.vertexai.goog"
+
+    mock_client = MagicMock()
+    mock_future = MagicMock()
+    mock_future.operation.name = "projects/555587849335/locations/us-central1/endpoints/5862688908034179072/operations/433865213851205632"
+    mock_client.deploy_model.return_value = mock_future
+
+    monkeypatch.setattr(aiplatform, "init", lambda **kwargs: None)
+    monkeypatch.setattr(aiplatform.Model, "upload", lambda **kwargs: fake_model)
+    monkeypatch.setattr(aiplatform.Endpoint, "create", lambda **kwargs: fake_endpoint)
+    monkeypatch.setattr(
+        aiplatform_v1, "EndpointServiceClient", lambda client_options=None: mock_client
+    )
+
+    result = deploy_model_to_geap(
+        project_id="555587849335",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://test-proj-models/gemma-31b",
+        machine_type="g4-standard-48",
+        dedicated_endpoint=True,
+        dry_run=False,
+    )
+
+    assert result["endpoint_url"] == (
+        "https://5862688908034179072.us-central1-555587849335.prediction.vertexai.goog"
+        "/v1/projects/555587849335/locations/us-central1/endpoints/5862688908034179072/invoke/v1"
+    )
 
 
 def test_deploy_command_no_container_image_option():
@@ -1055,4 +1109,47 @@ def test_deploy_command_bucket_not_found_fails_early_even_on_dry_run(monkeypatch
     )
     assert result.exit_code != 0
     assert "GCS bucket 'missing-bucket' does not exist or you do not have permission" in result.output
+
+
+def test_manifest_omits_unconfigured_options():
+    """Verify that unconfigured optional fields (service_account, routes, shared_memory_mb) are omitted from manifest."""
+    result = deploy_model_to_geap(
+        project_id="test-proj",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://test-proj-models/gemma-4-31B-it",
+        machine_type="ct6e-standard-4t",
+        engine=InferenceEngine.VLLM,
+        dry_run=True,
+    )
+    manifest = result["manifest"]
+    assert "service_account" not in manifest
+    assert "routes" not in manifest
+    assert "shared_memory_mb" not in manifest
+    assert "dry_run" not in manifest
+    assert manifest["machine_type"] == "ct6e-standard-4t"
+    assert manifest["dedicated_endpoint_enabled"] is True
+
+
+def test_container_args_omits_unconfigured_engine_options():
+    """Verify that container_args only includes explicitly configured options and required server flags."""
+    from google.models.cli._project import VLLMEngineConfig
+    cfg = VLLMEngineConfig.from_dict({
+        "engine": "vllm",
+        "tensor_parallel_size": 2,
+    })
+    args = build_container_args(cfg)
+    assert "--tensor-parallel-size=2" in args
+    assert "--host=0.0.0.0" in args
+    assert "--port=8080" in args
+    assert "--trust-remote-code" in args
+    # Verify unconfigured parameters are NOT injected
+    assert not any(arg.startswith("--max-model-len") for arg in args)
+    assert not any(arg.startswith("--kv-cache-dtype") for arg in args)
+    assert not any(arg.startswith("--gpu-memory-utilization") for arg in args)
+    assert not any(arg.startswith("--max-num-batched-tokens") for arg in args)
+    assert not any(arg.startswith("--pipeline-parallel-size") for arg in args)
+    assert "--enable-prefix-caching" not in args
+    assert "--enable-chunked-prefill" not in args
+
 

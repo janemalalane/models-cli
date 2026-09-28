@@ -3,5 +3,5 @@
 display_name: "{project_name}-endpoint"
 machine_type: null
 service_account: null
-shared_memory_mb: 65536
+# shared_memory_mb: 65536
 

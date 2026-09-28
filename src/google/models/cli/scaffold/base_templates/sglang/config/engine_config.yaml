@@ -4,5 +4,7 @@ engine: sglang
 
 # Parallelism & Memory
 tp_size: 1
-mem_fraction_static: 0.88
-context_length: 4096
+
+# Optional Performance Tuning (uncomment to configure)
+# mem_fraction_static: 0.88
+# context_length: 4096
