@@ -226,15 +226,15 @@ def test_deploy_model_endpoint_url_dedicated(monkeypatch):
     from google.cloud import aiplatform, aiplatform_v1
 
     fake_model = MagicMock()
-    fake_model.resource_name = "projects/555587849335/locations/us-central1/models/456"
+    fake_model.resource_name = "projects/123456789012/locations/us-central1/models/456"
     fake_endpoint = MagicMock()
-    fake_endpoint.resource_name = "projects/555587849335/locations/us-central1/endpoints/5862688908034179072"
+    fake_endpoint.resource_name = "projects/123456789012/locations/us-central1/endpoints/987654321098"
     fake_endpoint.dedicated_endpoint_enabled = True
-    fake_endpoint.dedicated_endpoint_dns = "5862688908034179072.us-central1-555587849335.prediction.vertexai.goog"
+    fake_endpoint.dedicated_endpoint_dns = "987654321098.us-central1-123456789012.prediction.vertexai.goog"
 
     mock_client = MagicMock()
     mock_future = MagicMock()
-    mock_future.operation.name = "projects/555587849335/locations/us-central1/endpoints/5862688908034179072/operations/433865213851205632"
+    mock_future.operation.name = "projects/123456789012/locations/us-central1/endpoints/987654321098/operations/111222333444"
     mock_client.deploy_model.return_value = mock_future
 
     monkeypatch.setattr(aiplatform, "init", lambda **kwargs: None)
@@ -245,7 +245,7 @@ def test_deploy_model_endpoint_url_dedicated(monkeypatch):
     )
 
     result = deploy_model_to_geap(
-        project_id="555587849335",
+        project_id="123456789012",
         location="us-central1",
         model_display_name="gemma-31b",
         model_uri="gs://test-proj-models/gemma-31b",
@@ -255,8 +255,8 @@ def test_deploy_model_endpoint_url_dedicated(monkeypatch):
     )
 
     assert result["endpoint_url"] == (
-        "https://5862688908034179072.us-central1-555587849335.prediction.vertexai.goog"
-        "/v1/projects/555587849335/locations/us-central1/endpoints/5862688908034179072/invoke/v1"
+        "https://987654321098.us-central1-123456789012.prediction.vertexai.goog"
+        "/v1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke/v1"
     )
 
 

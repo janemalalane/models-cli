@@ -251,26 +251,26 @@ def test_resolve_endpoint_and_base_url_url_argument():
 def test_resolve_endpoint_dedicated_dns_from_attribute():
     """Verify dedicated endpoint resolution when dedicated_endpoint_dns is provided."""
     mock_ep = MagicMock()
-    mock_ep.resource_name = "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
-    mock_ep.dedicated_endpoint_dns = "4414007571648610304.us-central1-555587849335.prediction.vertexai.goog"
+    mock_ep.resource_name = "projects/123456789012/locations/us-central1/endpoints/987654321098"
+    mock_ep.dedicated_endpoint_dns = "987654321098.us-central1-123456789012.prediction.vertexai.goog"
     mock_ep.gca_resource.deployed_models = [MagicMock(display_name="kimi-k2.5")]
 
     with patch("google.cloud.aiplatform.Endpoint", return_value=mock_ep):
         url, rn, model = resolve_endpoint_and_base_url(
-            endpoint_arg="projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
+            endpoint_arg="projects/123456789012/locations/us-central1/endpoints/987654321098"
         )
         assert (
             url
-            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1beta1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
+            == "https://987654321098.us-central1-123456789012.prediction.vertexai.goog/v1beta1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke/v1"
         )
-        assert rn == "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
+        assert rn == "projects/123456789012/locations/us-central1/endpoints/987654321098"
         assert model == "kimi-k2.5"
 
 
 def test_resolve_endpoint_dedicated_dns_constructed_when_empty_string():
     """Verify dedicated endpoint DNS is constructed when dedicated_endpoint_dns is empty but dedicated_endpoint_enabled is True."""
     mock_ep = MagicMock()
-    mock_ep.resource_name = "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
+    mock_ep.resource_name = "projects/123456789012/locations/us-central1/endpoints/987654321098"
     mock_ep.dedicated_endpoint_dns = ""
     mock_ep.gca_resource.dedicated_endpoint_dns = ""
     mock_ep.dedicated_endpoint_enabled = True
@@ -278,30 +278,30 @@ def test_resolve_endpoint_dedicated_dns_constructed_when_empty_string():
 
     with patch("google.cloud.aiplatform.Endpoint", return_value=mock_ep):
         url, _, _ = resolve_endpoint_and_base_url(
-            endpoint_arg="projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
+            endpoint_arg="projects/123456789012/locations/us-central1/endpoints/987654321098"
         )
         assert (
             url
-            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1beta1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
+            == "https://987654321098.us-central1-123456789012.prediction.vertexai.goog/v1beta1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke/v1"
         )
 
 
 def test_resolve_endpoint_rewrites_shared_aiplatform_url_for_dedicated():
     """Verify shared aiplatform.googleapis.com URL is rewritten to dedicated domain when endpoint is dedicated."""
     mock_ep = MagicMock()
-    mock_ep.resource_name = "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
-    mock_ep.dedicated_endpoint_dns = "4414007571648610304.us-central1-555587849335.prediction.vertexai.goog"
+    mock_ep.resource_name = "projects/123456789012/locations/us-central1/endpoints/987654321098"
+    mock_ep.dedicated_endpoint_dns = "987654321098.us-central1-123456789012.prediction.vertexai.goog"
     mock_ep.gca_resource.deployed_models = []
 
-    shared_url = "https://us-central1-aiplatform.googleapis.com/v1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke"
+    shared_url = "https://us-central1-aiplatform.googleapis.com/v1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke"
 
     with patch("google.cloud.aiplatform.Endpoint", return_value=mock_ep):
         url, rn, _ = resolve_endpoint_and_base_url(endpoint_arg=shared_url)
         assert (
             url
-            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1beta1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
+            == "https://987654321098.us-central1-123456789012.prediction.vertexai.goog/v1beta1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke/v1"
         )
-        assert rn == "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
+        assert rn == "projects/123456789012/locations/us-central1/endpoints/987654321098"
 
 
 def test_extract_reasoning_and_content_attribute():
