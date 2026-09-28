@@ -616,9 +616,8 @@ def test_deploy_status_cli(monkeypatch):
 def test_deploy_status_from_metadata_file(tmp_path, monkeypatch):
     import google.models.cli.deploy.cmd_deploy as cmd_deploy_mod
     from google.models.cli.deploy._operation import (
-        write_operation,
         read_operation,
-        clear_operation,
+        write_operation,
     )
 
     monkeypatch.chdir(tmp_path)
@@ -665,6 +664,59 @@ def test_deploy_status_from_metadata_file(tmp_path, monkeypatch):
     assert "Deployment Stage: CREATING_SERVING_CLUSTER" in result.stdout
     assert "Deployment Progress: Step 3 of 7" in result.stdout
     assert "Cluster Provisioning" in result.stdout
+
+
+def test_deploy_status_preserves_operation_when_done(tmp_path, monkeypatch):
+    import google.models.cli.deploy.cmd_deploy as cmd_deploy_mod
+    from google.models.cli.deploy._operation import (
+        write_operation,
+        read_operation,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").touch()
+    monkeypatch.setattr(
+        cmd_deploy_mod, "ensure_authenticated", lambda interactive: True
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod,
+        "get_operation_status",
+        lambda op_name, location=None: {
+            "name": op_name,
+            "status": "SUCCEEDED",
+            "done": True,
+            "deployment_stage": "SUCCESSFULLY_DEPLOYED",
+            "create_time": "2026-09-24T19:00:00Z",
+            "update_time": "2026-09-24T19:15:00Z",
+            "error": None,
+            "response": None,
+        },
+    )
+
+    write_operation(
+        operation_name="projects/123/locations/us-central1/endpoints/456/operations/999",
+        project="test-proj",
+        location="us-central1",
+        endpoint="projects/123/locations/us-central1/endpoints/456",
+        project_dir=tmp_path,
+    )
+
+    result = runner.invoke(app, ["deploy", "--status"])
+    assert result.exit_code == 0
+    assert "Deployment Succeeded" in result.stdout
+
+    # Verify operation was not cleared from metadata
+    op_data = read_operation(project_dir=tmp_path)
+    assert op_data is not None
+    assert (
+        op_data["operation_name"]
+        == "projects/123/locations/us-central1/endpoints/456/operations/999"
+    )
+
+    # Calling a second time should still succeed without 'No operation found' error
+    result2 = runner.invoke(app, ["deploy", "--status"])
+    assert result2.exit_code == 0
+    assert "Deployment Succeeded" in result2.stdout
 
 
 def test_format_elapsed_time():

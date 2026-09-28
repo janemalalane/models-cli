@@ -54,7 +54,9 @@ def _read_metadata(project_dir: str | Path | None = None) -> dict[str, Any]:
         with open(metadata_path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        logging.warning("Ignoring corrupt %s (%s); treating as empty.", metadata_path, e)
+        logging.warning(
+            "Ignoring corrupt %s (%s); treating as empty.", metadata_path, e
+        )
         return {}
     if not isinstance(data, dict):
         logging.warning(
@@ -133,7 +135,9 @@ def read_endpoint(project_dir: str | Path | None = None) -> str | None:
 def read_endpoint_url(project_dir: str | Path | None = None) -> str | None:
     """Read the deployed endpoint URL from METADATA_FILE."""
     data = _read_metadata(project_dir)
-    return data.get("endpoint_url") or (data.get("pending_operation") or {}).get("endpoint_url")
+    return data.get("endpoint_url") or (data.get("pending_operation") or {}).get(
+        "endpoint_url"
+    )
 
 
 def write_endpoint(
@@ -150,4 +154,3 @@ def write_endpoint(
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-

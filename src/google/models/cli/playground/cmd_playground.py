@@ -208,12 +208,17 @@ def resolve_endpoint_and_base_url(
                     model_name = discovered_model
 
                 if "aiplatform.googleapis.com" in endpoint_target and dns:
-                    return f"https://{dns}/v1/{actual_rn}/invoke/v1", actual_rn, model_name
+                    return f"https://{dns}/v1beta1/{actual_rn}/invoke/v1", actual_rn, model_name
             except Exception as e:  # noqa: BLE001
                 logger.debug("Failed inspecting endpoint from URL %s: %s", rn, e)
 
         # Direct URL formatting
         url = endpoint_target.rstrip("/")
+        url = re.sub(
+            r"/(?:v1|v1beta1)/(projects/[^/]+/locations/[^/]+/endpoints/)",
+            r"/v1beta1/\1",
+            url,
+        )
         url = url.removesuffix("/chat/completions").removesuffix("/completions")
         if url.endswith("/invoke"):
             url = f"{url}/v1"
@@ -233,12 +238,12 @@ def resolve_endpoint_and_base_url(
     dns, model_name, actual_rn = _resolve_endpoint_dns_and_model(ep, rn)
 
     if dns:
-        base_url = f"https://{dns}/v1/{actual_rn}/invoke/v1"
+        base_url = f"https://{dns}/v1beta1/{actual_rn}/invoke/v1"
     else:
         # Extract location from resource name
         loc_match = re.search(r"/locations/([^/]+)/", actual_rn)
         loc = loc_match.group(1) if loc_match else resolved_location
-        base_url = f"https://{loc}-aiplatform.googleapis.com/v1/{actual_rn}/invoke/v1"
+        base_url = f"https://{loc}-aiplatform.googleapis.com/v1beta1/{actual_rn}/invoke/v1"
 
     return base_url, actual_rn, model_name
 

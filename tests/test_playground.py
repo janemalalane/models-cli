@@ -239,6 +239,14 @@ def test_resolve_endpoint_and_base_url_url_argument():
     )
     assert url2 == "https://my-host.vertexai.goog/invoke/v1"
 
+    url3, _, _ = resolve_endpoint_and_base_url(
+        endpoint_arg="https://my-host.vertexai.goog/v1/projects/123/locations/us-central1/endpoints/456/invoke"
+    )
+    assert (
+        url3
+        == "https://my-host.vertexai.goog/v1beta1/projects/123/locations/us-central1/endpoints/456/invoke/v1"
+    )
+
 
 def test_resolve_endpoint_dedicated_dns_from_attribute():
     """Verify dedicated endpoint resolution when dedicated_endpoint_dns is provided."""
@@ -253,7 +261,7 @@ def test_resolve_endpoint_dedicated_dns_from_attribute():
         )
         assert (
             url
-            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
+            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1beta1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
         )
         assert rn == "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
         assert model == "kimi-k2.5"
@@ -269,12 +277,12 @@ def test_resolve_endpoint_dedicated_dns_constructed_when_empty_string():
     mock_ep.gca_resource.deployed_models = []
 
     with patch("google.cloud.aiplatform.Endpoint", return_value=mock_ep):
-        url, rn, model = resolve_endpoint_and_base_url(
+        url, _, _ = resolve_endpoint_and_base_url(
             endpoint_arg="projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
         )
         assert (
             url
-            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
+            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1beta1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
         )
 
 
@@ -291,7 +299,7 @@ def test_resolve_endpoint_rewrites_shared_aiplatform_url_for_dedicated():
         url, rn, _ = resolve_endpoint_and_base_url(endpoint_arg=shared_url)
         assert (
             url
-            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
+            == "https://4414007571648610304.us-central1-555587849335.prediction.vertexai.goog/v1beta1/projects/555587849335/locations/us-central1/endpoints/4414007571648610304/invoke/v1"
         )
         assert rn == "projects/555587849335/locations/us-central1/endpoints/4414007571648610304"
 

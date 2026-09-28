@@ -15,8 +15,7 @@
 """Deployment command for models-cli."""
 
 import json
-from pathlib import Path
-from typing import Any, Optional
+
 import click
 
 from google.models.cli._project import (
@@ -24,14 +23,13 @@ from google.models.cli._project import (
     read_engine_config,
     write_env,
 )
-from google.models.cli.common.auth import ensure_authenticated, is_auth_error
+from google.models.cli.common.auth import ensure_authenticated
 from google.models.cli.common.config import extract_model_name, settings
 from google.models.cli.common.constants import (
     DEFAULT_MODEL_REPO,
     InferenceEngine,
 )
 from google.models.cli.deploy._operation import (
-    clear_operation,
     read_operation,
     write_operation,
 )
@@ -43,7 +41,6 @@ from google.models.cli.deploy.deploy_utils import (
     copy_hf_model_to_gcs,
     deploy_model_to_geap,
     get_operation_status,
-    render_deployment_progress,
 )
 
 
@@ -108,16 +105,16 @@ from google.models.cli.deploy.deploy_utils import (
     help="Specific operation resource name to check status for (e.g. projects/.../operations/...).",
 )
 def deploy(
-    model_id: Optional[str] = None,
-    bucket: Optional[str] = None,
-    project: Optional[str] = None,
-    region: Optional[str] = None,
-    service_account: Optional[str] = None,
-    base_path: Optional[str] = None,
+    model_id: str | None = None,
+    bucket: str | None = None,
+    project: str | None = None,
+    region: str | None = None,
+    service_account: str | None = None,
+    base_path: str | None = None,
     dry_run: bool = False,
     status: bool = False,
     watch: bool = False,
-    operation: Optional[str] = None,
+    operation: str | None = None,
 ) -> None:
     """Deploys an open model container to a Gemini Enterprise Online Prediction endpoint."""
     if not dry_run and not ensure_authenticated(interactive=True):
@@ -146,6 +143,7 @@ def deploy(
 
         if watch:
             import time
+
             from rich.live import Live
 
             click.echo("Watching deployment operation (press Ctrl+C to stop)...\n")
@@ -173,9 +171,7 @@ def deploy(
                 except KeyboardInterrupt:
                     pass
 
-            if op_status.get("done"):
-                clear_operation()
-            else:
+            if not op_status.get("done"):
                 click.echo(
                     "\nStopped watching. Deployment is still running in the background."
                 )
@@ -191,9 +187,7 @@ def deploy(
                     op_status, pending_operation=pending_operation
                 )
             )
-            if op_status.get("done"):
-                clear_operation()
-            else:
+            if not op_status.get("done"):
                 click.echo(
                     "💡 Tip: Run 'models-cli deploy --status --watch' to monitor progress live.\n"
                 )
