@@ -75,7 +75,7 @@ def _extract_reasoning_and_content(obj: Any) -> tuple[str | None, str | None]:
 
 def _get_auth_token() -> str:
     """Retrieve and refresh Google Cloud credentials token."""
-    creds, _ = google.auth.default()
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     if not creds.valid:
         auth_req = google.auth.transport.requests.Request()
         creds.refresh(auth_req)
