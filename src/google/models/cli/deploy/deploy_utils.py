@@ -41,6 +41,7 @@ from google.models.cli.common.constants import (
     DEFAULT_TENSOR_PARALLEL_SIZE,
     DEFAULT_UPLOAD_REQUEST_TIMEOUT,
     HARDWARE_SPECS,
+    AcceleratorFamily,
     InferenceEngine,
 )
 
@@ -409,7 +410,11 @@ def deploy_model_to_geap(
             "min_replica_count": 1,
             "max_replica_count": 1,
         }
-        if accelerator_type and accelerator_count:
+        if (
+            accelerator_type
+            and accelerator_count
+            and hardware_spec.get("family") == AcceleratorFamily.GPU
+        ):
             dedicated_resources["machine_spec"]["accelerator_type"] = accelerator_type
             dedicated_resources["machine_spec"]["accelerator_count"] = accelerator_count
 

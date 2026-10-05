@@ -16,7 +16,9 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def mock_getpass_stdin(monkeypatch):
     monkeypatch.setattr(
-        getpass, "getpass", lambda prompt="", stream=None: sys.stdin.readline().rstrip("\n")
+        getpass,
+        "getpass",
+        lambda prompt="", stream=None: sys.stdin.readline().rstrip("\n"),
     )
 
 
@@ -130,17 +132,22 @@ def test_interactive_create_custom_project(tmp_path, monkeypatch):
     )
 
     # Inputs: model, engine, region, custom project ID, bucket, base_path, service_account, hf_token, endpoint_url
-    user_inputs = "\n".join([
-        "google/gemma-4-31B-it",                               # model
-        "vllm",                                                # engine
-        "us-central1",                                         # region
-        "my-desired-project",                                  # type desired project
-        "my-custom-bucket",                                    # bucket
-        "models/weights",                                      # base_path
-        "custom-sa@my-desired-project.iam.gserviceaccount.com", # service_account
-        "hf_my_secret_token",                                  # hf_token
-        "https://my-endpoint.domain.com",                      # endpoint_url
-    ]) + "\n"
+    user_inputs = (
+        "\n".join(
+            [
+                "google/gemma-4-31B-it",  # model
+                "vllm",  # engine
+                "us-central1",  # region
+                "my-desired-project",  # type desired project
+                "my-custom-bucket",  # bucket
+                "models/weights",  # base_path
+                "custom-sa@my-desired-project.iam.gserviceaccount.com",  # service_account
+                "hf_my_secret_token",  # hf_token
+                "https://my-endpoint.domain.com",  # endpoint_url
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -166,7 +173,10 @@ def test_interactive_create_custom_project(tmp_path, monkeypatch):
     assert 'GOOGLE_CLOUD_LOCATION="us-central1"' in env_content
     assert 'GOOGLE_CLOUD_STORAGE_BUCKET="my-custom-bucket"' in env_content
     assert 'GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH="models/weights"' in env_content
-    assert 'SERVICE_ACCOUNT_EMAIL="custom-sa@my-desired-project.iam.gserviceaccount.com"' in env_content
+    assert (
+        'SERVICE_ACCOUNT_EMAIL="custom-sa@my-desired-project.iam.gserviceaccount.com"'
+        in env_content
+    )
     assert 'MODEL_ID="google/gemma-4-31B-it"' in env_content
     assert 'HF_TOKEN="hf_my_secret_token"' in env_content
     assert 'ENDPOINT_URL="https://my-endpoint.domain.com"' in env_content
@@ -180,17 +190,22 @@ def test_interactive_create_accept_default_project(tmp_path, monkeypatch):
     )
 
     # Inputs: model, engine, region, default project, bucket (required, no default), default base_path, default sa, default hf_token, default endpoint_url
-    user_inputs = "\n".join([
-        "google/gemma-4-31B-it",  # model
-        "vllm",                   # engine
-        "us-central1",            # region
-        "",                       # empty input -> accepts default active-gcloud-config-proj
-        "active-custom-bucket",   # compulsory bucket entered by user
-        "",                       # empty input -> accepts default "" base_path
-        "",                       # empty input -> accepts default "" sa
-        "",                       # empty input -> accepts default "" hf_token
-        "",                       # empty input -> accepts default "" endpoint_url
-    ]) + "\n"
+    user_inputs = (
+        "\n".join(
+            [
+                "google/gemma-4-31B-it",  # model
+                "vllm",  # engine
+                "us-central1",  # region
+                "",  # empty input -> accepts default active-gcloud-config-proj
+                "active-custom-bucket",  # compulsory bucket entered by user
+                "",  # empty input -> accepts default "" base_path
+                "",  # empty input -> accepts default "" sa
+                "",  # empty input -> accepts default "" hf_token
+                "",  # empty input -> accepts default "" endpoint_url
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -220,25 +235,33 @@ def test_interactive_create_accept_default_project(tmp_path, monkeypatch):
     assert 'ENDPOINT_URL=""' in env_content
 
 
-def test_interactive_create_when_gcloud_config_empty_accept_placeholder(tmp_path, monkeypatch):
-    target_name = "empty-gcloud-placeholder"
+def test_interactive_create_when_gcloud_config_empty_requires_project(
+    tmp_path, monkeypatch
+):
+    target_name = "empty-gcloud-required"
     monkeypatch.setattr(
         "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
         lambda override_project=None: None,
     )
 
-    # Inputs: model, engine, region, default YOUR_GCP_PROJECT_ID, compulsory bucket, default base_path, default sa, default hf_token, default endpoint
-    user_inputs = "\n".join([
-        "google/gemma-4-31B-it",  # model
-        "vllm",                   # engine
-        "us-central1",            # region
-        "",                       # empty input -> accepts default YOUR_GCP_PROJECT_ID
-        "placeholder-bucket",     # compulsory bucket
-        "",                       # empty input -> default "" base_path
-        "",                       # empty input -> default "" sa
-        "",                       # empty input -> default "" hf_token
-        "",                       # empty input -> default "" endpoint
-    ]) + "\n"
+    # Inputs: model, engine, region, empty project (rejected), typed project, compulsory bucket, default base_path, default sa, default hf_token, default endpoint
+    user_inputs = (
+        "\n".join(
+            [
+                "google/gemma-4-31B-it",  # model
+                "vllm",  # engine
+                "us-central1",  # region
+                "",  # empty input -> rejected!
+                "my-entered-project",  # user provides real project
+                "placeholder-bucket",  # compulsory bucket
+                "",  # empty input -> default "" base_path
+                "",  # empty input -> default "" sa
+                "",  # empty input -> default "" hf_token
+                "",  # empty input -> default "" endpoint
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -252,16 +275,18 @@ def test_interactive_create_when_gcloud_config_empty_accept_placeholder(tmp_path
         input=user_inputs,
     )
     assert result.exit_code == 0
-    assert "YOUR_GCP_PROJECT_ID" in result.output
+    assert "GCP project ID is required" in result.output
     env_content = (tmp_path / target_name / ".env").read_text()
-    assert 'GOOGLE_CLOUD_PROJECT="YOUR_GCP_PROJECT_ID"' in env_content
+    assert 'GOOGLE_CLOUD_PROJECT="my-entered-project"' in env_content
     assert 'GOOGLE_CLOUD_STORAGE_BUCKET="placeholder-bucket"' in env_content
     assert 'GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH=""' in env_content
     assert 'HF_TOKEN=""' in env_content
     assert 'ENDPOINT_URL=""' in env_content
 
 
-def test_interactive_create_when_gcloud_config_empty_user_types_project(tmp_path, monkeypatch):
+def test_interactive_create_when_gcloud_config_empty_user_types_project(
+    tmp_path, monkeypatch
+):
     target_name = "empty-gcloud-custom"
     monkeypatch.setattr(
         "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
@@ -269,17 +294,22 @@ def test_interactive_create_when_gcloud_config_empty_user_types_project(tmp_path
     )
 
     # Inputs: model, engine, region, type custom project, compulsory bucket, default base_path, default sa, default hf_token, default endpoint
-    user_inputs = "\n".join([
-        "google/gemma-4-31B-it",      # model
-        "vllm",                       # engine
-        "us-central1",                # region
-        "typed-custom-project",       # project
-        "typed-custom-models-bucket", # compulsory bucket
-        "",                           # default base_path
-        "",                           # default sa
-        "",                           # default hf_token
-        "",                           # default endpoint
-    ]) + "\n"
+    user_inputs = (
+        "\n".join(
+            [
+                "google/gemma-4-31B-it",  # model
+                "vllm",  # engine
+                "us-central1",  # region
+                "typed-custom-project",  # project
+                "typed-custom-models-bucket",  # compulsory bucket
+                "",  # default base_path
+                "",  # default sa
+                "",  # default hf_token
+                "",  # default endpoint
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -313,19 +343,24 @@ def test_interactive_create_bucket_compulsory_reprompts(tmp_path, monkeypatch):
     # model, engine, region, project,
     # empty bucket (should be rejected), empty bucket (rejected again), valid bucket gs://actual-bucket/
     # base_path, sa, hf_token, endpoint
-    user_inputs = "\n".join([
-        "google/gemma-4-31B-it",  # model
-        "vllm",                   # engine
-        "us-central1",            # region
-        "",                       # default project
-        "",                       # empty bucket -> rejected!
-        "   ",                    # whitespace bucket -> rejected!
-        "gs://actual-bucket/",    # valid bucket with gs:// prefix & trailing slash
-        "",                       # default base_path
-        "",                       # default sa
-        "",                       # default hf_token
-        "",                       # default endpoint
-    ]) + "\n"
+    user_inputs = (
+        "\n".join(
+            [
+                "google/gemma-4-31B-it",  # model
+                "vllm",  # engine
+                "us-central1",  # region
+                "",  # default project
+                "",  # empty bucket -> rejected!
+                "   ",  # whitespace bucket -> rejected!
+                "gs://actual-bucket/",  # valid bucket with gs:// prefix & trailing slash
+                "",  # default base_path
+                "",  # default sa
+                "",  # default hf_token
+                "",  # default endpoint
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(
         app,
@@ -380,9 +415,126 @@ def test_create_with_all_env_options_flags(tmp_path):
     assert 'GOOGLE_CLOUD_LOCATION="us-east4"' in env_content
     assert 'GOOGLE_CLOUD_STORAGE_BUCKET="flag-bucket"' in env_content
     assert 'GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH="weights/gemma"' in env_content
-    assert 'SERVICE_ACCOUNT_EMAIL="sa@flag-project-123.iam.gserviceaccount.com"' in env_content
+    assert (
+        'SERVICE_ACCOUNT_EMAIL="sa@flag-project-123.iam.gserviceaccount.com"'
+        in env_content
+    )
     assert 'MODEL_ID="google/gemma-4-31B-it"' in env_content
     assert 'HF_TOKEN="hf_flag_token"' in env_content
     assert 'ENDPOINT_URL="https://flag-endpoint.internal"' in env_content
 
+
+def test_interactive_create_existing_directory_reprompts(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.resolve_gcp_project",
+        lambda override_project=None: "my-valid-proj",
+    )
+
+    # Pre-create a colliding non-empty directory
+    colliding_dir = tmp_path / "colliding-app"
+    colliding_dir.mkdir(parents=True)
+    (colliding_dir / "existing_file.txt").write_text("already here")
+
+    # Inputs:
+    # 1. colliding name (rejected)
+    # 2. empty name (rejected)
+    # 3. fresh valid name (accepted)
+    # 4. model, engine, region, project, bucket, base_path, sa, hf_token, endpoint
+    user_inputs = (
+        "\n".join(
+            [
+                "colliding-app",
+                "fresh-valid-app",
+                "google/gemma-4-31B-it",
+                "vllm",
+                "us-central1",
+                "",  # default project
+                "my-test-bucket",
+                "",  # default base_path
+                "",  # default sa
+                "",  # default hf_token
+                "",  # default endpoint
+            ]
+        )
+        + "\n"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "-i",
+            "--skip-checks",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input=user_inputs,
+    )
+    assert result.exit_code == 0
+    assert "already exists and is not empty" in result.output
+    assert (tmp_path / "fresh-valid-app" / ".env").is_file()
+
+
+def test_interactive_create_skips_prompts_for_cli_provided_flags(tmp_path):
+    # Pass project_name, project_id (-p), bucket, model, region via CLI flags with -i.
+    # The prompts for project_name, model, engine, region, project_id, and bucket should NOT be shown or ask for input.
+    # Only optional unprovided params (base_path, sa, hf_token, endpoint) should prompt.
+    user_inputs = (
+        "\n".join(
+            [
+                "vllm",  # engine (was not passed via flag)
+                "custom-base-path",  # base_path
+                "custom-sa@my-proj.iam.gserviceaccount.com",  # sa
+                "my-hf-token",  # hf_token
+                "https://my-endpoint.internal",  # endpoint
+            ]
+        )
+        + "\n"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "cli-provided-app",
+            "-i",
+            "--skip-checks",
+            "--project",
+            "cli-flag-project",
+            "--bucket",
+            "cli-flag-bucket",
+            "--model",
+            "google/gemma-4-26B-it",
+            "--region",
+            "europe-west1",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input=user_inputs,
+    )
+
+    assert result.exit_code == 0
+    # Prompts for CLI-provided options must not appear
+    assert "What is your project name?" not in result.output
+    assert "What is your model ID" not in result.output
+    assert "What is your GCP region?" not in result.output
+    assert "What is your GCP project ID?" not in result.output
+    assert "What is your GCS bucket" not in result.output
+
+    # Prompts for non-provided options should appear
+    assert "What is your inference engine" in result.output
+    assert "What is your base path in GCS bucket" in result.output
+    assert "What is your service account email" in result.output
+    assert "What is your Hugging Face token" in result.output
+    assert "What is your deployed endpoint URL" in result.output
+
+    env_content = (tmp_path / "cli-provided-app" / ".env").read_text()
+    assert 'GOOGLE_CLOUD_PROJECT="cli-flag-project"' in env_content
+    assert 'GOOGLE_CLOUD_STORAGE_BUCKET="cli-flag-bucket"' in env_content
+    assert 'GOOGLE_CLOUD_LOCATION="europe-west1"' in env_content
+    assert 'MODEL_ID="google/gemma-4-26B-it"' in env_content
+    assert 'GOOGLE_CLOUD_STORAGE_BUCKET_BASE_PATH="custom-base-path"' in env_content
+    assert 'SERVICE_ACCOUNT_EMAIL="custom-sa@my-proj.iam.gserviceaccount.com"' in env_content
+    assert 'HF_TOKEN="my-hf-token"' in env_content
+    assert 'ENDPOINT_URL="https://my-endpoint.internal"' in env_content
 

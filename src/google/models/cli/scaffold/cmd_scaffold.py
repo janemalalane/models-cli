@@ -15,8 +15,8 @@
 """Scaffold / create command for models-cli."""
 
 from pathlib import Path
-from typing import Optional
 import click
+from click.core import ParameterSource
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -30,6 +30,7 @@ from google.models.cli.common.constants import (
 from google.models.cli.scaffold.scaffold_utils import (
     copy_and_render_templates,
     normalize_project_name,
+    verify_credentials_and_vertex,
 )
 
 console = Console()
@@ -58,6 +59,7 @@ console = Console()
 @click.option(
     "--project",
     "-p",
+    "project_id",
     default=None,
     help="GCP project ID (GOOGLE_CLOUD_PROJECT). Defaults to active gcloud / ADC project.",
 )
@@ -117,37 +119,59 @@ console = Console()
     default=None,
     help="Parent directory where the project directory will be created.",
 )
+@click.pass_context
 def create_project(
-    project_name: Optional[str] = None,
-    template: str = DEFAULT_ENGINE,
-    model: str = DEFAULT_MODEL_REPO,
-    region: str = DEFAULT_REGION,
-    project: Optional[str] = None,
-    bucket: Optional[str] = None,
-    base_path: Optional[str] = None,
-    service_account: Optional[str] = None,
-    hf_token: Optional[str] = None,
-    endpoint_url: Optional[str] = None,
-    interactive: bool = False,
-    auto_approve: bool = False,
-    skip_checks: bool = False,
-    output_dir: Optional[str] = None,
+    ctx: click.Context,
+    project_name: str | None,
+    *,
+    template: str,
+    model: str,
+    region: str,
+    project_id: str | None,
+    bucket: str | None,
+    base_path: str | None,
+    service_account: str | None,
+    hf_token: str | None,
+    endpoint_url: str | None,
+    interactive: bool,
+    auto_approve: bool,
+    skip_checks: bool,
+    output_dir: str | None,
 ) -> None:
     """Creates an open model serving, deployment, and benchmarking project workspace."""
     is_interactive = interactive or (not auto_approve and project_name is None)
 
+    target_parent = Path(output_dir).resolve() if output_dir else Path.cwd()
+
     # 1. Project Name
     if not project_name:
         if is_interactive:
-            project_name = Prompt.ask(
-                "\n> What is your project name?",
-                default="my-model-service",
-            )
+            while True:
+                candidate_name = Prompt.ask(
+                    "\n> What is your project name?",
+                    default="my-model-service",
+                ).strip()
+                if not candidate_name:
+                    console.print(
+                        "[bold red]❌ Project name cannot be empty.[/bold red]"
+                    )
+                    continue
+
+                normalized_name = normalize_project_name(candidate_name)
+                candidate_dir = target_parent / normalized_name
+
+                if candidate_dir.exists() and any(candidate_dir.iterdir()):
+                    console.print(
+                        f"[bold red]❌ Error:[/bold red] Directory '{candidate_dir}' already exists and is not empty. Please choose a different name."
+                    )
+                    continue
+
+                project_name = normalized_name
+                break
         else:
             project_name = "my-model-service"
 
     project_name = normalize_project_name(project_name)
-    target_parent = Path(output_dir).resolve() if output_dir else Path.cwd()
     project_dir = target_parent / project_name
 
     if project_dir.exists() and any(project_dir.iterdir()):
@@ -157,17 +181,25 @@ def create_project(
         raise click.exceptions.Exit(1)
 
     # 2. Model Repo
-    if is_interactive and not auto_approve:
+    if (
+        is_interactive
+        and not auto_approve
+        and ctx.get_parameter_source("model") != ParameterSource.COMMANDLINE
+    ):
         model = Prompt.ask(
             "> 📦 What is your model ID (Hugging Face repository)?",
-            default=model or DEFAULT_MODEL_REPO,
+            default=model,
         )
 
     # 3. Serving Engine
-    if is_interactive and not auto_approve:
+    if (
+        is_interactive
+        and not auto_approve
+        and ctx.get_parameter_source("template") != ParameterSource.COMMANDLINE
+    ):
         template = Prompt.ask(
             "> ⚡ What is your inference engine [vllm / sglang]?",
-            default=template or DEFAULT_ENGINE,
+            default=template,
         )
     engine_val = template.lower().strip()
     if engine_val not in ("vllm", "sglang"):
@@ -177,8 +209,12 @@ def create_project(
         engine_val = "vllm"
 
     # 4. GCP Region
-    if is_interactive and not auto_approve:
-        default_region = region or DEFAULT_REGION
+    if (
+        is_interactive
+        and not auto_approve
+        and ctx.get_parameter_source("region") != ParameterSource.COMMANDLINE
+    ):
+        default_region = region
         region = ""
         while not region:
             region = Prompt.ask(
@@ -189,95 +225,101 @@ def create_project(
                 console.print("[bold red]❌ GCP region is required.[/bold red]")
 
     # 5. GCP Project ID Selection
-    default_project = (
-        project or resolve_gcp_project(override_project=project) or "YOUR_GCP_PROJECT_ID"
-    )
-    if is_interactive and not auto_approve:
+    if project_id:
+        resolved_project = project_id
+    elif is_interactive and not auto_approve:
+        default_project = resolve_gcp_project() or ""
         resolved_project = ""
         while not resolved_project:
-            resolved_project = Prompt.ask(
-                "> 📁 What is your GCP project ID?",
-                default=default_project,
-            ).strip()
+            if default_project:
+                resolved_project = Prompt.ask(
+                    "> 📁 What is your GCP project ID?",
+                    default=default_project,
+                ).strip()
+            else:
+                resolved_project = Prompt.ask(
+                    "> 📁 What is your GCP project ID?",
+                ).strip()
             if not resolved_project:
                 console.print("[bold red]❌ GCP project ID is required.[/bold red]")
     else:
+        default_project = resolve_gcp_project() or ""
+        if not default_project:
+            console.print(
+                "[bold red]❌ Error:[/bold red] GCP project ID is required. Please pass --project <PROJECT_ID> or set gcloud config."
+            )
+            raise click.exceptions.Exit(1)
         resolved_project = default_project
 
-    # 6. GCS Bucket Name
-    if is_interactive and not auto_approve:
-        gcs_bucket = (bucket or "").strip()
-        if gcs_bucket.startswith("gs://"):
-            gcs_bucket = gcs_bucket[len("gs://") :]
-        gcs_bucket = gcs_bucket.strip("/")
+    # Verification checks
+    if not skip_checks:
+        is_ok, msg = verify_credentials_and_vertex(resolved_project, region)
+        if is_ok:
+            console.print(f"[dim]✓ {msg}[/dim]")
+        else:
+            console.print(
+                f"[bold yellow]⚠️  GCP verification warning:[/bold yellow] {msg}\n"
+                "[dim]Continuing with local project scaffolding...[/dim]"
+            )
 
+    # 6. GCS Bucket Name
+    gcs_bucket = (bucket or "").strip().removeprefix("gs://").strip("/")
+    if not gcs_bucket and is_interactive and not auto_approve:
         while not gcs_bucket:
-            if bucket:
-                raw_bucket = Prompt.ask(
-                    "> 🪣 What is your GCS bucket for model artifacts?",
-                    default=bucket,
-                )
-            else:
-                raw_bucket = Prompt.ask(
-                    "> 🪣 What is your GCS bucket for model artifacts?",
-                )
-            raw_bucket = raw_bucket.strip()
-            if raw_bucket.startswith("gs://"):
-                raw_bucket = raw_bucket[len("gs://") :]
-            gcs_bucket = raw_bucket.strip("/")
+            raw_bucket = Prompt.ask(
+                "> 🪣 What is your GCS bucket for model artifacts?",
+            )
+            gcs_bucket = raw_bucket.strip().removeprefix("gs://").strip("/")
             if not gcs_bucket:
-                console.print(
-                    "[bold red]❌ GCS bucket name is required.[/bold red]"
-                )
-    else:
-        raw_bucket = (bucket or "").strip()
-        if raw_bucket.startswith("gs://"):
-            raw_bucket = raw_bucket[len("gs://") :]
-        gcs_bucket = raw_bucket.strip("/")
+                console.print("[bold red]❌ GCS bucket name is required.[/bold red]")
 
     # 7. Artifact Base Path
-    default_base_path = base_path or ""
-    if is_interactive and not auto_approve:
+    if base_path is not None:
+        resolved_base_path = base_path
+    elif is_interactive and not auto_approve:
         resolved_base_path = Prompt.ask(
             "> 📂 What is your base path in GCS bucket (optional)?",
-            default=default_base_path,
+            default="",
         ).strip()
     else:
-        resolved_base_path = default_base_path
+        resolved_base_path = ""
     resolved_base_path = (
         resolved_base_path.strip().strip("/") if resolved_base_path else ""
     )
 
     # 8. Service Account Email
-    default_sa = service_account or ""
-    if is_interactive and not auto_approve:
+    if service_account is not None:
+        sa_email = service_account
+    elif is_interactive and not auto_approve:
         sa_email = Prompt.ask(
             "> 👤 What is your service account email (optional)?",
-            default=default_sa,
+            default="",
         ).strip()
     else:
-        sa_email = default_sa
+        sa_email = ""
 
     # 9. Hugging Face Token
-    default_hf = hf_token or ""
-    if is_interactive and not auto_approve:
+    if hf_token is not None:
+        resolved_hf_token = hf_token
+    elif is_interactive and not auto_approve:
         resolved_hf_token = Prompt.ask(
             "> 🔑 What is your Hugging Face token (optional)?",
-            default=default_hf,
+            default="",
             password=True,
         ).strip()
     else:
-        resolved_hf_token = default_hf
+        resolved_hf_token = ""
 
     # 10. Deployed Endpoint URL
-    default_endpoint = endpoint_url or ""
-    if is_interactive and not auto_approve:
+    if endpoint_url is not None:
+        resolved_endpoint_url = endpoint_url
+    elif is_interactive and not auto_approve:
         resolved_endpoint_url = Prompt.ask(
             "> 🌐 What is your deployed endpoint URL (optional)?",
-            default=default_endpoint,
+            default="",
         ).strip()
     else:
-        resolved_endpoint_url = default_endpoint
+        resolved_endpoint_url = ""
 
     context = {
         "project_name": project_name,

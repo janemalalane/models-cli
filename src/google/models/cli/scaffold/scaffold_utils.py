@@ -15,6 +15,8 @@
 """Scaffolding utilities for models-cli project generation."""
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
 from google.cloud import aiplatform
@@ -44,9 +46,34 @@ def verify_credentials_and_vertex(project_id: str, location: str) -> Tuple[bool,
     Returns:
         Tuple of (success_boolean, status_message).
     """
+    if not project_id:
+        return False, "Project ID is required."
+
     try:
+        from google.models.cli.common.auth import check_adc_validity
+
+        if not check_adc_validity():
+            return False, "Google Cloud Application Default Credentials (ADC) are missing or expired."
+
+        # Verify project exists and is accessible via gcloud if available
+        if shutil.which("gcloud"):
+            res = subprocess.run(
+                ["gcloud", "projects", "describe", project_id, "--quiet", "--format=value(projectId)"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if res.returncode != 0:
+                err_msg = res.stderr.strip()
+                if "not found" in err_msg.lower():
+                    return False, f"GCP project '{project_id}' was not found."
+                elif "permission" in err_msg.lower() or "denied" in err_msg.lower():
+                    return False, f"Permission denied for GCP project '{project_id}'."
+                elif err_msg:
+                    return False, err_msg.splitlines()[0]
+
         aiplatform.init(project=project_id, location=location)
-        # Attempt lightweight API check
         return True, f"Successfully connected to Gemini Enterprise Online Prediction in '{project_id}' ({location})."
     except Exception as e:
         return False, str(e)
