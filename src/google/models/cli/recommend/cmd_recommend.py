@@ -16,7 +16,6 @@
 
 import json
 from pathlib import Path
-from typing import Optional
 import click
 from rich.console import Console
 from rich.panel import Panel
@@ -161,23 +160,24 @@ console = Console()
     help="List all supported models in GKE Recommender and exit.",
 )
 def recommend(
-    model: Optional[str] = None,
-    target_cost_per_million_input_tokens: Optional[float] = None,
-    target_cost_per_million_output_tokens: Optional[float] = None,
-    output_input_cost_ratio: Optional[float] = None,
-    target_ttft_milliseconds: Optional[int] = None,
-    target_ntpot_milliseconds: Optional[int] = None,
-    use_case: Optional[str] = None,
-    input_tokens: Optional[int] = None,
-    output_tokens: Optional[int] = None,
-    pricing_model: str = DEFAULT_PRICING_MODEL,
-    model_server: Optional[str] = None,
-    model_server_version: Optional[str] = None,
-    family: str = AcceleratorFamily.ANY.value,
-    sort_by: str = "cost",
-    format_type: str = "table",
-    apply: bool = False,
-    list_models: bool = False,
+    *,
+    model: str | None,
+    target_cost_per_million_input_tokens: float | None,
+    target_cost_per_million_output_tokens: float | None,
+    output_input_cost_ratio: float | None,
+    target_ttft_milliseconds: int | None,
+    target_ntpot_milliseconds: int | None,
+    use_case: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    pricing_model: str,
+    model_server: str | None,
+    model_server_version: str | None,
+    family: str,
+    sort_by: str,
+    format_type: str,
+    apply: bool,
+    list_models: bool,
 ) -> None:
     """Recommends hardware configurations and engine parameters using GKE Recommender."""
     # Validate custom input/output token options first
@@ -315,7 +315,7 @@ def recommend(
                 {
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
-                    "ratio": _format_distribution_ratio(input_tokens, output_tokens),
+                    "ratio": _format_distribution_ratio(input_tokens, output_tokens),  # type: ignore
                     "is_interpolated": True,
                 }
                 if is_custom_dist
@@ -332,7 +332,7 @@ def recommend(
     )
 
     if is_custom_dist:
-        ratio_val = _format_distribution_ratio(input_tokens, output_tokens)
+        ratio_val = _format_distribution_ratio(input_tokens, output_tokens)  # type: ignore
         console.print(
             Panel.fit(
                 f"[bold yellow]ℹ️  Custom Workload Distribution:[/bold yellow] [bold cyan]{input_tokens:,}[/bold cyan] input tokens / [bold cyan]{output_tokens:,}[/bold cyan] output tokens (Ratio: [bold blue]{ratio_val}[/bold blue])\n"
@@ -470,10 +470,14 @@ def recommend(
                     selected_rec = top
             else:
                 max_rank = len(recs)
-                choice = Prompt.ask(
-                    f"\nSelect a recommendation to apply to config/deployment_spec.yaml (1-{max_rank}, [bold]y[/bold]=#1, [bold]n[/bold]=cancel)",
-                    default="1",
-                ).strip().lower()
+                choice = (
+                    Prompt.ask(
+                        f"\nSelect a recommendation to apply to config/deployment_spec.yaml (1-{max_rank}, [bold]y[/bold]=#1, [bold]n[/bold]=cancel)",
+                        default="1",
+                    )
+                    .strip()
+                    .lower()
+                )
 
                 if choice in ("y", "yes", "1"):
                     selected_rec = recs[0]
@@ -484,9 +488,13 @@ def recommend(
                     if 1 <= num <= max_rank:
                         selected_rec = recs[num - 1]
                     else:
-                        console.print(f"[yellow]Invalid selection '{choice}'. Skipping configuration update.[/yellow]\n")
+                        console.print(
+                            f"[yellow]Invalid selection '{choice}'. Skipping configuration update.[/yellow]\n"
+                        )
                 else:
-                    console.print(f"[yellow]Invalid selection '{choice}'. Skipping configuration update.[/yellow]\n")
+                    console.print(
+                        f"[yellow]Invalid selection '{choice}'. Skipping configuration update.[/yellow]\n"
+                    )
 
         if selected_rec:
             updated = apply_recommendation(selected_rec, Path.cwd())

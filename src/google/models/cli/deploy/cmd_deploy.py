@@ -117,7 +117,7 @@ def deploy(
     operation: str | None = None,
 ) -> None:
     """Deploys an open model container to a Gemini Enterprise Online Prediction endpoint."""
-    if not dry_run and not ensure_authenticated(interactive=True):
+    if not ensure_authenticated(interactive=True):
         raise click.exceptions.Exit(1)
 
     # 1. Load defaults from project configs via DeploymentConfig & EngineConfig

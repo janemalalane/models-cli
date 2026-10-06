@@ -3,7 +3,7 @@
 engine: sglang
 
 # Parallelism & Memory
-tp_size: 1
+tensor_parallel_size: 1
 
 # Optional Performance Tuning (uncomment to configure)
 # mem_fraction_static: 0.88

@@ -15,7 +15,7 @@
 """Profile interpolation utilities for estimating latency and throughput for custom token distributions."""
 
 import math
-from typing import Any, Optional
+from typing import Any
 
 
 def interpolate_profile_metrics(
@@ -47,7 +47,7 @@ def interpolate_profile_metrics(
 
     # Calculate distances
     weights: list[float] = []
-    exact_match: Optional[dict[str, Any]] = None
+    exact_match: dict[str, Any] | None = None
 
     for b in baselines:
         b_in = b.get("average_input_length") or 512
@@ -71,7 +71,7 @@ def interpolate_profile_metrics(
         total_weight = sum(weights)
         norm_weights = [w / total_weight for w in weights] if total_weight > 0 else [1.0 / len(weights)] * len(weights)
 
-        def weighted_avg(key: str) -> Optional[float]:
+        def weighted_avg(key: str) -> float | None:
             valid_pairs = [(w, b.get(key)) for w, b in zip(norm_weights, baselines) if b.get(key) is not None]
             if not valid_pairs:
                 return None
@@ -94,7 +94,7 @@ def interpolate_profile_metrics(
 
     # Physics check & per-request latency calculation
     # E2E Latency = TTFT + target_output_tokens * ITL
-    est_latency_ms: Optional[float] = None
+    est_latency_ms: float | None = None
     if ttft is not None:
         eff_itl = itl if itl is not None else (ntpot if ntpot is not None else 20)
         est_latency_ms = ttft + (target_output_tokens * eff_itl)

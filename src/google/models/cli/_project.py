@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 import click
 from dotenv import set_key
 import yaml
@@ -50,9 +50,9 @@ class DeploymentConfig:
     """Configuration derived from deployment_spec.yaml."""
 
     display_name: str = ""
-    machine_type: Optional[str] = None
+    machine_type: str | None = None
     container_image_uri: str = ""
-    service_account: Optional[str] = None
+    service_account: str | None = None
     dedicated_endpoint: bool = True
     shared_memory_mb: int = DEFAULT_SHARED_MEMORY_MB
     routes: dict[str, str] = field(default_factory=_default_routes)

@@ -17,18 +17,17 @@
 import json
 import os
 import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 import yaml
 
 
 def generate_benchmark_config(
-    template_config_path: Optional[Path],
+    template_config_path: Path | None,
     output_config_path: Path,
     model_name: str,
-    endpoint_url: Optional[str] = None,
+    endpoint_url: str | None = None,
     mock: bool = False,
 ) -> Path:
     """Generates an inference-perf configuration YAML file.
@@ -268,7 +267,7 @@ def generate_markdown_report(
     return report_file
 
 
-def find_inference_perf_command() -> Optional[list[str]]:
+def find_inference_perf_command() -> list[str] | None:
     """Resolves the executable command for running inference-perf.
 
     Resolution order:

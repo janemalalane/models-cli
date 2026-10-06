@@ -17,7 +17,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from dotenv import load_dotenv
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -54,7 +54,7 @@ def extract_model_name(model_id: str) -> str:
     return parts[0]
 
 
-def find_dotenv() -> Optional[Path]:
+def find_dotenv() -> Path | None:
     """Search upwards for .env file starting from current working directory."""
     current = Path.cwd()
     for directory in [current, *current.parents]:
@@ -82,28 +82,28 @@ class Settings(BaseSettings):
     )
 
     # Compulsory Google Cloud Configuration (validated via validate_deployment_env)
-    google_cloud_project: Optional[str] = None
-    google_cloud_location: Optional[str] = None
-    google_cloud_storage_bucket: Optional[str] = None
+    google_cloud_project: str | None = None
+    google_cloud_location: str | None = None
+    google_cloud_storage_bucket: str | None = None
 
     # Optional Artifact Base Path inside the GCS bucket.
     # Remains None if not provided in environment.
-    artifact_base_path: Optional[str] = None
-    base_path: Optional[str] = None
-    google_cloud_storage_bucket_base_path: Optional[str] = None
+    artifact_base_path: str | None = None
+    base_path: str | None = None
+    google_cloud_storage_bucket_base_path: str | None = None
 
     # Optional Service Account & Container Configuration
-    service_account_email: Optional[str] = None
-    docker_repository: Optional[str] = None
-    device_type: Optional[str] = None
+    service_account_email: str | None = None
+    docker_repository: str | None = None
+    device_type: str | None = None
 
     # Model Configuration (Single Source of Truth)
-    hf_token: Optional[str] = None
+    hf_token: str | None = None
     model_id: str = DEFAULT_MODEL_REPO
 
     # Endpoint & Auth
-    auth_token: Optional[str] = None
-    endpoint_url: Optional[str] = None
+    auth_token: str | None = None
+    endpoint_url: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -201,9 +201,9 @@ class Settings(BaseSettings):
 
     def validate_deployment_env(
         self,
-        override_project: Optional[str] = None,
-        override_location: Optional[str] = None,
-        override_bucket: Optional[str] = None,
+        override_project: str | None = None,
+        override_location: str | None = None,
+        override_bucket: str | None = None,
     ) -> dict[str, str]:
         """Validates that compulsory deployment variables are set and valid.
 

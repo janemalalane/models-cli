@@ -17,7 +17,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def load_golden_dataset(dataset_path: Path) -> list[dict[str, Any]]:

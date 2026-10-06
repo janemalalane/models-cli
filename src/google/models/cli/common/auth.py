@@ -17,7 +17,6 @@
 import shutil
 import subprocess
 import sys
-from typing import Optional
 
 from rich.console import Console
 from rich.prompt import Confirm
@@ -95,7 +94,7 @@ def is_auth_error(exc: Exception) -> bool:
         return True
 
     # Check error message and chained exceptions for GCE metadata fallback or auth expiry
-    current: Optional[BaseException] = exc
+    current: BaseException | None = exc
     while current:
         msg = str(current).lower()
         if any(

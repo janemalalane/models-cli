@@ -20,7 +20,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 import click
 from google.cloud import aiplatform, aiplatform_v1, resourcemanager_v3, storage
 from google.iam.v1 import policy_pb2
@@ -54,7 +54,7 @@ from google.models.cli._project import (
 
 def dict_to_cli_args(
     params: dict[str, Any],
-    excluded_keys: Optional[set[str]] = None,
+    excluded_keys: set[str] | None = None,
 ) -> list[str]:
     """Converts a dictionary of configuration options into CLI flag strings."""
     args: list[str] = []
@@ -86,10 +86,10 @@ def dict_to_cli_args(
 
 
 def build_container_args(
-    target: Union[EngineConfig, str],
-    engine: Optional[InferenceEngine] = None,
-    engine_params: Optional[dict[str, Any]] = None,
-    model_uri: Optional[str] = None,
+    target: EngineConfig | str,
+    engine: InferenceEngine | None = None,
+    engine_params: dict[str, Any] | None = None,
+    model_uri: str | None = None,
 ) -> list[str]:
     """Constructs command line arguments for the container entrypoint."""
     if isinstance(target, (VLLMEngineConfig, SGLangEngineConfig)):
@@ -187,8 +187,8 @@ def copy_hf_model_to_gcs(
     repo_id: str,
     bucket_name: str,
     location: str,
-    destination_path: Optional[str] = None,
-    hf_token: Optional[str] = None,
+    destination_path: str | None = None,
+    hf_token: str | None = None,
 ) -> str:
     """Downloads model weights from Hugging Face and uploads to GCS."""
     from huggingface_hub import snapshot_download
@@ -257,15 +257,15 @@ def deploy_model_to_geap(
     model_display_name: str,
     model_uri: str,
     machine_type: str,
-    engine_config: Optional[EngineConfig] = None,
-    engine: Optional[InferenceEngine] = None,
-    engine_params: Optional[dict[str, Any]] = None,
-    service_account_email: Optional[str] = None,
-    shared_memory_mb: Optional[int] = None,
-    container_image_uri: Optional[str] = None,
-    endpoint_display_name: Optional[str] = None,
+    engine_config: EngineConfig | None = None,
+    engine: InferenceEngine | None = None,
+    engine_params: dict[str, Any] | None = None,
+    service_account_email: str | None = None,
+    shared_memory_mb: int | None = None,
+    container_image_uri: str | None = None,
+    endpoint_display_name: str | None = None,
     dedicated_endpoint: bool = True,
-    routes: Optional[dict[str, Any]] = None,
+    routes: dict[str, Any] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Deploys model to Gemini Enterprise Online Prediction Endpoint.
@@ -587,7 +587,7 @@ DEPLOYMENT_PIPELINE_ORDER: list[tuple[str, str]] = [
 ]
 
 
-def get_stage_info(stage_name: Optional[str]) -> Optional[dict[str, Any]]:
+def get_stage_info(stage_name: str | None) -> dict[str, Any] | None:
     """Returns metadata details for a given Gemini Enterprise DeploymentStage name."""
     if not stage_name:
         return None
@@ -595,8 +595,8 @@ def get_stage_info(stage_name: Optional[str]) -> Optional[dict[str, Any]]:
 
 
 def format_elapsed_time(
-    create_time_str: Optional[str], end_time_str: Optional[str] = None
-) -> Optional[str]:
+    create_time_str: str | None, end_time_str: str | None = None
+) -> str | None:
     """Calculates human-readable elapsed duration from an ISO timestamp string."""
     if not create_time_str:
         return None
@@ -631,7 +631,7 @@ def render_progress_bar(percent: int, width: int = 30) -> str:
 
 def build_deployment_progress_panel(
     operation_status: dict[str, Any],
-    pending_operation: Optional[dict[str, Any]] = None,
+    pending_operation: dict[str, Any] | None = None,
 ) -> Any:
     """Constructs a Rich Panel displaying the deployment progress and pipeline."""
     from rich.panel import Panel
@@ -748,7 +748,7 @@ def build_deployment_progress_panel(
 
 def build_deployment_status_renderable(
     operation_status: dict[str, Any],
-    pending_operation: Optional[dict[str, Any]] = None,
+    pending_operation: dict[str, Any] | None = None,
 ) -> Any:
     """Builds a composite Rich renderable combining the progress panel and status details."""
     from rich.console import Group
@@ -786,7 +786,7 @@ def build_deployment_status_renderable(
 
 def render_deployment_progress(
     operation_status: dict[str, Any],
-    pending_operation: Optional[dict[str, Any]] = None,
+    pending_operation: dict[str, Any] | None = None,
 ) -> None:
     """Renders a formatted, human-friendly Rich panel of the deployment progress."""
     from google.models.cli.common.console import console
@@ -799,7 +799,7 @@ def render_deployment_progress(
 
 def get_operation_status(
     operation_name: str,
-    location: Optional[str] = None,
+    location: str | None = None,
 ) -> dict[str, Any]:
     """Gets the latest status of a Long-Running Operation (LRO).
 

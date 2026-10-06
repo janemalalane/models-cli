@@ -18,7 +18,6 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple
 from google.cloud import aiplatform
 
 
@@ -36,7 +35,7 @@ def normalize_project_name(name: str) -> str:
     return normalized
 
 
-def verify_credentials_and_vertex(project_id: str, location: str) -> Tuple[bool, str]:
+def verify_credentials_and_vertex(project_id: str, location: str) -> tuple[bool, str]:
     """Verifies Google Cloud credentials and Gemini Enterprise Online Prediction initialization.
 
     Args:

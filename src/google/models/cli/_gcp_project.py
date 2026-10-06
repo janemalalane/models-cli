@@ -14,15 +14,13 @@
 
 """GCP project resolution and lookup utilities."""
 
-import click
 import os
 import shutil
 import subprocess
-from typing import Optional
-import subprocess
+import click
 
 
-def _get_project_from_gcloud() -> Optional[str]:
+def _get_project_from_gcloud() -> str | None:
     """Retrieves the active project configured in gcloud CLI."""
     if not shutil.which("gcloud"):
         return None
@@ -43,7 +41,7 @@ def _get_project_from_gcloud() -> Optional[str]:
     return None
 
 
-def _get_account_from_gcloud() -> Optional[str]:
+def _get_account_from_gcloud() -> str | None:
     """Retrieves the active account logged into gcloud CLI."""
     if not shutil.which("gcloud"):
         return None
@@ -92,7 +90,7 @@ def list_accessible_gcp_projects(limit: int = 15) -> list[str]:
     return []
 
 
-def _get_adc_project() -> Optional[str]:
+def _get_adc_project() -> str | None:
     """Retrieves project from Google Application Default Credentials."""
     try:
         import google.auth
@@ -108,7 +106,7 @@ def _get_adc_project() -> Optional[str]:
 _get_project_from_adc = _get_adc_project
 
 
-def get_active_gcp_account() -> Optional[str]:
+def get_active_gcp_account() -> str | None:
     """Retrieves active GCP account email."""
     account = os.environ.get("GOOGLE_CLOUD_ACCOUNT")
     if account:
@@ -116,7 +114,7 @@ def get_active_gcp_account() -> Optional[str]:
     return _get_account_from_gcloud()
 
 
-def get_gcp_access_token() -> Optional[str]:
+def get_gcp_access_token() -> str | None:
     """Dynamically fetches or refreshes an active GCP OAuth2 access token."""
     # 1. Try google.auth default credentials
     try:

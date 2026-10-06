@@ -1136,6 +1136,9 @@ def test_deploy_command_bucket_not_found_fails_early_even_on_dry_run(monkeypatch
     import google.models.cli.deploy.cmd_deploy as cmd_deploy_mod
 
     monkeypatch.setattr(
+        cmd_deploy_mod, "ensure_authenticated", lambda interactive: True
+    )
+    monkeypatch.setattr(
         cmd_deploy_mod,
         "read_deployment_config",
         lambda project_dir=None: DeploymentConfig(machine_type="g4-standard-48"),
@@ -1161,6 +1164,38 @@ def test_deploy_command_bucket_not_found_fails_early_even_on_dry_run(monkeypatch
     )
     assert result.exit_code != 0
     assert "GCS bucket 'missing-bucket' does not exist or you do not have permission" in result.output
+
+
+def test_deploy_command_dry_run_requires_authentication(monkeypatch):
+    import google.models.cli.deploy.cmd_deploy as cmd_deploy_mod
+
+    auth_checked = []
+
+    def fake_ensure_authenticated(interactive=True):
+        auth_checked.append(interactive)
+        return False
+
+    monkeypatch.setattr(
+        cmd_deploy_mod, "ensure_authenticated", fake_ensure_authenticated
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "deploy",
+            "--model-id",
+            "google/gemma-4-31B-it",
+            "--bucket",
+            "my-bucket",
+            "--project",
+            "test-project-123",
+            "--region",
+            "us-central1",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code != 0
+    assert auth_checked == [True]
 
 
 def test_manifest_omits_unconfigured_options():

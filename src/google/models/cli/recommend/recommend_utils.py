@@ -15,11 +15,12 @@
 """Recommendation utilities powered strictly by the Google Cloud GKE Recommender service."""
 
 from pathlib import Path
-from typing import Any, Optional
-import yaml
-from google.protobuf.json_format import MessageToDict
-import google.auth.exceptions
+from typing import Any
+
 import google.api_core.exceptions
+import google.auth.exceptions
+from google.protobuf.json_format import MessageToDict
+import yaml
 
 from google.models.cli.common.constants import (
     DEFAULT_PRICING_MODEL,
@@ -39,7 +40,7 @@ class ModelNotSupportedError(Exception):
         self.supported_models = supported_models
 
 
-def fetch_supported_models(client: Optional[Any] = None) -> list[str]:
+def fetch_supported_models(client: Any | None = None) -> list[str]:
     """Fetches the list of supported model repositories from GKE Recommender."""
     if client is None:
         import google.cloud.gkerecommender_v1 as gke_rec
@@ -200,7 +201,7 @@ KNOWN_USE_CASE_LENGTHS: dict[str, tuple[int, int]] = {
 }
 
 
-def _match_use_case(profile_use_case: str, target_use_case: Optional[str]) -> bool:
+def _match_use_case(profile_use_case: str, target_use_case: str | None) -> bool:
     """Matches a workload use-case using case-insensitive shorthand keywords."""
     if not target_use_case:
         return True
@@ -233,20 +234,21 @@ def _match_use_case(profile_use_case: str, target_use_case: Optional[str]) -> bo
 
 def get_recommendations(
     model_id: str,
-    model_server: Optional[str] = None,
-    model_server_version: Optional[str] = None,
-    target_cost_per_million_input_tokens: Optional[float] = None,
-    target_cost_per_million_output_tokens: Optional[float] = None,
-    output_input_cost_ratio: Optional[float] = None,
-    pricing_model: Optional[str] = DEFAULT_PRICING_MODEL,
-    target_ttft_milliseconds: Optional[int] = None,
-    target_ntpot_milliseconds: Optional[int] = None,
-    use_case: Optional[str] = None,
-    input_tokens: Optional[int] = None,
-    output_tokens: Optional[int] = None,
+    *,
+    model_server: str | None = None,
+    model_server_version: str | None = None,
+    target_cost_per_million_input_tokens: float | None = None,
+    target_cost_per_million_output_tokens: float | None = None,
+    output_input_cost_ratio: float | None = None,
+    pricing_model: str | None = DEFAULT_PRICING_MODEL,
+    target_ttft_milliseconds: int | None = None,
+    target_ntpot_milliseconds: int | None = None,
+    use_case: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
     family: AcceleratorFamily = AcceleratorFamily.ANY,
     sort_by: str = "cost",
-    client: Optional[Any] = None,
+    client: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Retrieves and ranks genuine hardware configurations from GKE Recommender service.
 

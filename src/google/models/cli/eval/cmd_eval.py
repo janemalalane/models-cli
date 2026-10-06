@@ -15,7 +15,6 @@
 """Evaluation command for models-cli."""
 
 from pathlib import Path
-from typing import Optional
 import click
 from rich.console import Console
 from rich.prompt import Confirm
@@ -65,11 +64,12 @@ settings = Settings()
     help="Simulate model evaluation responses without making live model API calls.",
 )
 def eval(
-    models: str = str(settings.model_id),
-    dataset: str = "tests/eval/golden_dataset.jsonl",
-    metrics: str = "accuracy,quality",
-    set_winner: bool = False,
-    mock: bool = False,
+    *,
+    models: str,
+    dataset: str,
+    metrics: str,
+    set_winner: bool,
+    mock: bool,
 ) -> None:
     """Evaluates candidate open models on a golden benchmark dataset and ranks the winner."""
     if not mock and not ensure_authenticated(interactive=True):

@@ -14,15 +14,11 @@
 
 """Benchmarking command for models-cli."""
 
-import os
-import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 import click
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from google.models.cli._gcp_project import get_gcp_access_token
@@ -71,11 +67,12 @@ console = Console()
     help="Run against inference-perf mock server without requiring a live cloud endpoint.",
 )
 def benchmark(
-    endpoint: Optional[str] = None,
-    config: Optional[str] = None,
-    model: Optional[str] = None,
-    output_dir: Optional[str] = None,
-    mock: bool = False,
+    *,
+    endpoint: str | None,
+    config: str | None,
+    model: str | None,
+    output_dir: str | None,
+    mock: bool,
 ) -> None:
     """Runs performance benchmarks with inference-perf and outputs comparison metrics."""
     target_model = model or settings.model_id or DEFAULT_MODEL_REPO

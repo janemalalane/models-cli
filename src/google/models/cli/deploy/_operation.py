@@ -26,7 +26,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from google.models.cli._project import find_project_root
 
@@ -72,9 +72,9 @@ def write_operation(
     operation_name: str,
     project: str,
     location: str,
-    endpoint: Optional[str] = None,
+    endpoint: str | None = None,
     deployment_target: str = "geap",
-    endpoint_url: Optional[str] = None,
+    endpoint_url: str | None = None,
     project_dir: str | Path | None = None,
 ) -> None:
     """Persist a pending deploy operation to METADATA_FILE."""
@@ -142,7 +142,7 @@ def read_endpoint_url(project_dir: str | Path | None = None) -> str | None:
 
 def write_endpoint(
     endpoint: str,
-    endpoint_url: Optional[str] = None,
+    endpoint_url: str | None = None,
     project_dir: str | Path | None = None,
 ) -> None:
     """Record or update the deployed endpoint resource name and URL in METADATA_FILE."""

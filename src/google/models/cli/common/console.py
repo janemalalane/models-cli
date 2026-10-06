@@ -14,7 +14,7 @@
 
 """Rich console helpers and UI styling for models-cli."""
 
-from typing import Any, Optional
+from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -24,7 +24,7 @@ console = Console()
 error_console = Console(stderr=True)
 
 
-def print_banner(title: str = "models-cli", subtitle: Optional[str] = None) -> None:
+def print_banner(title: str = "models-cli", subtitle: str | None = None) -> None:
     """Renders formatted application banner."""
     content = Text()
     content.append("⚡ ", style="bold yellow")
@@ -44,7 +44,7 @@ def print_warning(message: str) -> None:
     console.print(f"[bold yellow]⚠️  Warning:[/bold yellow] {message}")
 
 
-def print_error(message: str, hint: Optional[str] = None) -> None:
+def print_error(message: str, hint: str | None = None) -> None:
     """Prints red error panel with optional resolution hint."""
     text = Text()
     text.append(f"❌ {message}\n", style="bold red")
