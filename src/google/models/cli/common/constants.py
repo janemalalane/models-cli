@@ -24,6 +24,8 @@ DEFAULT_SGLANG_CONTAINER_IMAGE = (
     "us-docker.pkg.dev/agent-platform-mg-public/containers/pytorch-sglang-serve"
 )
 
+DEFAULT_LLAMA_CONTAINER_IMAGE = ()
+
 
 class InferenceEngine(str, Enum):
     VLLM = "vllm"
@@ -462,5 +464,20 @@ HARDWARE_SPECS: dict[str, dict] = {
         "hourly_cost_usd": 14.40,
         "memory_bandwidth_gb_s": 13120,
         "description": "Trillium TPU 8-chip configuration for ultra-scale LLM inference",
+    },
+    "c4-standard-192": {
+        "family": "cpu",
+    },
+    "c4-standard-96": {
+        "family": "cpu",
+    },
+    "c4-standard-48": {
+        "family": "cpu",
+    },
+    "n2-standard-48": {
+        "family": "cpu",
+    },
+    "n2-standard-32": {
+        "family": "cpu",
     },
 }

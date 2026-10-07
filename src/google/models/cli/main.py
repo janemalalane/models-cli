@@ -26,6 +26,7 @@ from google.models.cli import __version__
 from google.models.cli._click import LazyGroup, patch_source_in_help
 from google.models.cli._gcp_project import get_active_gcp_account, resolve_gcp_project
 from google.models.cli.common.auth import is_authenticated
+from google.models.cli.common.banner import display_banner
 from google.models.cli.common.constants import DEFAULT_MODEL_REPO, DEFAULT_REGION
 
 # Force utf-8 encoding and non-exception fallback for printing
@@ -39,6 +40,11 @@ console = Console()
 
 class _MainGroup(LazyGroup):
     """Click group with lazy command loading and full-traceback exception handling."""
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        display_banner(Console(file=sys.stdout))
+        click.echo()
+        super().format_help(ctx, formatter)
 
     def invoke(self, ctx: click.Context) -> None:
         try:
@@ -96,7 +102,7 @@ main.add_lazy_command(
 main.add_lazy_command(
     "recommend",
     "google.models.cli.recommend.cmd_recommend:recommend",
-    "Hardware & engine parameter recommendations from Google Cloud GKE Recommender",
+    "Hardware & engine recommendations from Google Cloud GKE Inference Quickstart API",
 )
 main.add_lazy_command(
     "deploy",

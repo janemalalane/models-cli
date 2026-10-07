@@ -15,17 +15,19 @@
 """Scaffold / create command for models-cli."""
 
 from pathlib import Path
+
 import click
 from click.core import ParameterSource
 from rich.console import Console
 from rich.prompt import Prompt
 
-from google.models.cli._gcp_project import resolve_gcp_project
+from google.models.cli._gcp_project import get_active_gcp_account, resolve_gcp_project
+from google.models.cli.common.auth import is_authenticated
+from google.models.cli.common.banner import display_banner
 from google.models.cli.common.constants import (
     DEFAULT_ENGINE,
     DEFAULT_MODEL_REPO,
     DEFAULT_REGION,
-    InferenceEngine,
 )
 from google.models.cli.scaffold.scaffold_utils import (
     copy_and_render_templates,
@@ -34,6 +36,31 @@ from google.models.cli.scaffold.scaffold_utils import (
 )
 
 console = Console()
+
+
+def _print_section(number: int, title: str, subtitle: str | None = None) -> None:
+    """Print a numbered section header with underline matching title length."""
+    header = f" {number}. {title}"
+    console.print()
+    console.print(f"[bold]{header}[/bold]")
+    console.print(f" {'─' * (len(header) - 1)}")
+    if subtitle:
+        console.print(f"  [dim]{subtitle}[/dim]\n")
+
+
+def _display_intro(c: Console) -> None:
+    """Brief, oriented welcome shown right after the banner."""
+    c.print("  [bold]Setting up open-weights model workspace.[/]")
+    c.print(
+        "  [dim]This scaffolds serving configs, deployment specs, and evaluation datasets.[/]"
+    )
+    c.print()
+    c.print("  [dim]Here's what we'll do together:[/]")
+    c.print("    [dim]1.[/] Name your workspace directory")
+    c.print("    [dim]2.[/] Select target Hugging Face model & inference serving engine")
+    c.print("    [dim]3.[/] Verify Google Cloud environment & configure artifact storage (GCS)")
+    c.print("    [dim]4.[/] Configure service account & optional deployment settings")
+    c.print()
 
 
 @click.command("create")
@@ -141,14 +168,25 @@ def create_project(
     """Creates an open model serving, deployment, and benchmarking project workspace."""
     is_interactive = interactive or (not auto_approve and project_name is None)
 
+    if is_interactive and not auto_approve:
+        console.print("Setting up...")
+        console.print()
+        display_banner(console)
+        _display_intro(console)
+
     target_parent = Path(output_dir).resolve() if output_dir else Path.cwd()
 
     # 1. Project Name
     if not project_name:
         if is_interactive:
+            _print_section(
+                1,
+                "Project Workspace Setup",
+                "Choose a workspace directory name for your model service.",
+            )
             while True:
                 candidate_name = Prompt.ask(
-                    "\n> What is your project name?",
+                    "> What is your project name?",
                     default="my-model-service",
                 ).strip()
                 if not candidate_name:
@@ -180,7 +218,18 @@ def create_project(
         )
         raise click.exceptions.Exit(1)
 
-    # 2. Model Repo
+    # 2. Model Repo & Engine
+    step_2_needed = is_interactive and not auto_approve and (
+        ctx.get_parameter_source("model") != ParameterSource.COMMANDLINE
+        or ctx.get_parameter_source("template") != ParameterSource.COMMANDLINE
+    )
+    if step_2_needed:
+        _print_section(
+            2,
+            "Target Model & Serving Engine",
+            "Specify the Hugging Face model repository and inference serving engine.",
+        )
+
     if (
         is_interactive
         and not auto_approve
@@ -209,6 +258,13 @@ def create_project(
         engine_val = "vllm"
 
     # 4. GCP Region
+    if is_interactive and not auto_approve:
+        _print_section(
+            3,
+            "Google Cloud Environment & Storage",
+            "Verify GCP project, credentials, and configure model artifact storage.",
+        )
+
     if (
         is_interactive
         and not auto_approve
@@ -251,11 +307,27 @@ def create_project(
             raise click.exceptions.Exit(1)
         resolved_project = default_project
 
-    # Verification checks
+    # Environment status readout & verification checks
+    if is_interactive and not auto_approve:
+        console.print()
+        console.print(f"  [green]>[/] GOOGLE_CLOUD_PROJECT = [cyan]{resolved_project}[/cyan]")
+        console.print(f"  [green]>[/] GOOGLE_CLOUD_LOCATION = [cyan]{region}[/cyan]")
+        active_account = get_active_gcp_account()
+        if active_account:
+            console.print(f"  [green]>[/] Active GCP Account = [cyan]{active_account}[/cyan]")
+        authed, _ = is_authenticated()
+        if authed:
+            console.print("  [green]>[/] Application Default Credentials present")
+        else:
+            console.print("  [yellow]![/] Application Default Credentials not detected")
+
     if not skip_checks:
         is_ok, msg = verify_credentials_and_vertex(resolved_project, region)
         if is_ok:
-            console.print(f"[dim]✓ {msg}[/dim]")
+            if is_interactive and not auto_approve:
+                console.print(f"  [green]>[/] {msg}")
+            else:
+                console.print(f"[dim]✓ {msg}[/dim]")
         else:
             console.print(
                 f"[bold yellow]⚠️  GCP verification warning:[/bold yellow] {msg}\n"
@@ -287,7 +359,17 @@ def create_project(
         resolved_base_path.strip().strip("/") if resolved_base_path else ""
     )
 
-    # 8. Service Account Email
+    # 8. Service Account Email & Credentials
+    step_4_needed = is_interactive and not auto_approve and (
+        service_account is None or hf_token is None or endpoint_url is None
+    )
+    if step_4_needed:
+        _print_section(
+            4,
+            "Service Account & Deployment Target",
+            "Configure identity, Hugging Face access token, and optional endpoint URL.",
+        )
+
     if service_account is not None:
         sa_email = service_account
     elif is_interactive and not auto_approve:
@@ -342,16 +424,22 @@ def create_project(
         context=context,
     )
 
-    # 7. Success Banner
+    # Success readout & next steps
+    console.print()
     console.print(
-        f"\n[bold green]✅ Success![/bold green] Your open model project [bold cyan]'{project_name}'[/bold cyan] is ready.\n"
+        f"[bold green]✓[/bold green] [bold]Workspace ready:[/] [cyan]{project_name}[/cyan]"
     )
-    console.print("[bold]📖 Documentation[/bold]")
-    console.print(f"   README:    cat {project_name}/README.md\n")
-    console.print("[bold]🚀 Get Started[/bold]")
-    console.print(f"   cd {project_name}")
-    console.print(f"   models-cli recommend --model {model}")
-    console.print("   models-cli deploy --dry-run\n")
+    console.print(
+        f"  [dim]Engine:[/] [cyan]{engine_val}[/cyan]  •  "
+        f"[dim]Model:[/] [cyan]{model}[/cyan]  •  "
+        f"[dim]Region:[/] [cyan]{region}[/cyan]"
+    )
+    console.print()
+    console.print("  [bold]Get started:[/bold]")
+    console.print(f"    [dim]1.[/] cd {project_name}")
+    console.print(f"    [dim]2.[/] models-cli recommend --model {model}")
+    console.print("    [dim]3.[/] models-cli deploy --dry-run")
+    console.print()
 
 
 scaffold_cmd = create_project

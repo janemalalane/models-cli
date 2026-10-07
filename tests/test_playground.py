@@ -247,6 +247,16 @@ def test_resolve_endpoint_and_base_url_url_argument():
         == "https://my-host.vertexai.goog/v1beta1/projects/123/locations/us-central1/endpoints/456/invoke/v1"
     )
 
+    url4, _, _ = resolve_endpoint_and_base_url(
+        endpoint_arg="http://localhost:8080"
+    )
+    assert url4 == "http://localhost:8080/v1"
+
+    url5, _, _ = resolve_endpoint_and_base_url(
+        endpoint_arg="http://localhost:8080/v1"
+    )
+    assert url5 == "http://localhost:8080/v1"
+
 
 def test_resolve_endpoint_dedicated_dns_from_attribute():
     """Verify dedicated endpoint resolution when dedicated_endpoint_dns is provided."""
@@ -387,3 +397,18 @@ def test_playground_repl_content_only_no_splitting(monkeypatch):
     assert result.exit_code == 0
     assert "[Thought]" not in result.output
     assert "Model > to=selfhi\nWe need to respond.assistant to=userHi!" in result.output
+
+
+def test_get_openai_client_appends_v1(monkeypatch):
+    """Verify that _get_openai_client appends /v1 to the base_url if omitted."""
+    import google.models.cli.playground.cmd_playground as pg_mod
+
+    monkeypatch.setattr(pg_mod, "_get_auth_token", lambda: "mock-token")
+    client1 = pg_mod._get_openai_client("https://my-endpoint.com/invoke")
+    assert str(client1.base_url).rstrip("/") == "https://my-endpoint.com/invoke/v1"
+
+    client2 = pg_mod._get_openai_client("https://my-endpoint.com/invoke/v1")
+    assert str(client2.base_url).rstrip("/") == "https://my-endpoint.com/invoke/v1"
+
+    client3 = pg_mod._get_openai_client("http://localhost:8080")
+    assert str(client3.base_url).rstrip("/") == "http://localhost:8080/v1"

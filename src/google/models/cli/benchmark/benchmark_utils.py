@@ -114,9 +114,14 @@ def generate_benchmark_config(
             out_dist["mean"] = min(128, max(10, out_max // 2))
         out_dist.setdefault("std_dev", 30)
 
+        base_endpoint = endpoint_url or server_dict.get("base_url") or "http://localhost:8080"
+        clean_url = str(base_endpoint).rstrip("/")
+        if clean_url.endswith("/v1"):
+            clean_url = clean_url[:-3].rstrip("/")
+
         server_dict["type"] = "vllm"
         server_dict["model_name"] = model_name
-        server_dict["base_url"] = endpoint_url or "http://localhost:8080"
+        server_dict["base_url"] = clean_url or "http://localhost:8080"
 
     output_config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_config_path, "w", encoding="utf-8") as f:

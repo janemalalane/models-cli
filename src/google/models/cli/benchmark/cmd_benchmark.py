@@ -76,7 +76,12 @@ def benchmark(
 ) -> None:
     """Runs performance benchmarks with inference-perf and outputs comparison metrics."""
     target_model = model or settings.model_id or DEFAULT_MODEL_REPO
-    target_endpoint = endpoint or settings.endpoint_url or "http://localhost:8080"
+    raw_endpoint = endpoint or settings.endpoint_url or "http://localhost:8080"
+    target_endpoint = raw_endpoint.rstrip("/")
+    if target_endpoint.endswith("/v1"):
+        target_endpoint = target_endpoint[:-3].rstrip("/")
+    if not target_endpoint:
+        target_endpoint = "http://localhost:8080"
 
     # Automatically fetch fresh GCP access token for remote endpoints
     auth_token = settings.auth_token or ""

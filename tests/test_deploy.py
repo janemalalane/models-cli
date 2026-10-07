@@ -218,7 +218,7 @@ def test_deploy_model_upload_and_create_use_custom_spec(monkeypatch):
     assert polling.DEFAULT_POLLING._timeout == DEFAULT_UPLOAD_REQUEST_TIMEOUT
     assert created_endpoint_kwargs["display_name"] == "custom-endpoint-display"
     assert created_endpoint_kwargs["dedicated_endpoint_enabled"] is False
-    assert result["endpoint_url"] == "https://us-central1-aiplatform.googleapis.com/v1/projects/123/locations/us-central1/endpoints/789/invoke/v1"
+    assert result["endpoint_url"] == "https://us-central1-aiplatform.googleapis.com/v1/projects/123/locations/us-central1/endpoints/789/invoke"
 
 
 def test_deploy_model_endpoint_url_dedicated(monkeypatch):
@@ -256,7 +256,7 @@ def test_deploy_model_endpoint_url_dedicated(monkeypatch):
 
     assert result["endpoint_url"] == (
         "https://987654321098.us-central1-123456789012.prediction.vertexai.goog"
-        "/v1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke/v1"
+        "/v1/projects/123456789012/locations/us-central1/endpoints/987654321098/invoke"
     )
 
 

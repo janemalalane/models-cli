@@ -84,8 +84,17 @@ def _get_auth_token() -> str:
 
 def _get_openai_client(base_url: str) -> OpenAI:
     """Instantiate OpenAI client configured for the Gemini Enterprise Online Prediction endpoint."""
-    token = _get_auth_token()
-    return OpenAI(base_url=base_url, api_key=token)
+    cleaned_url = base_url.rstrip("/")
+    if not cleaned_url.endswith("/v1"):
+        cleaned_url = f"{cleaned_url}/v1"
+    if "localhost" in cleaned_url or "127.0.0.1" in cleaned_url:
+        try:
+            token = _get_auth_token()
+        except Exception:
+            token = "dummy-token"
+    else:
+        token = _get_auth_token()
+    return OpenAI(base_url=cleaned_url, api_key=token)
 
 
 def _resolve_endpoint_dns_and_model(
@@ -223,7 +232,14 @@ def resolve_endpoint_and_base_url(
         if url.endswith("/invoke"):
             url = f"{url}/v1"
         elif not url.endswith("/v1"):
-            url = f"{url}/invoke/v1"
+            if (
+                "endpoints/" in url
+                or "aiplatform.googleapis.com" in url
+                or "prediction.vertexai.goog" in url
+            ):
+                url = f"{url}/invoke/v1"
+            else:
+                url = f"{url}/v1"
         return url, rn, model_name
 
     # 2. Check if endpoint_target is an endpoint resource name

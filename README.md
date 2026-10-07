@@ -42,7 +42,7 @@ uv run models-cli --help
 | [`info`](#diagnostics-models-cli-info) | Check active GCP project, credentials, and configuration | — |
 | [`create`](#1-scaffold-a-serving-project-models-cli-create) | Scaffold a new model-serving project with configs & recipes | `-i/--interactive`, `-t/--template`, `-m/--model`, `-y/--yes` |
 | [`eval`](#2-evaluate-candidate-models-models-cli-eval) | Evaluate model quality against golden datasets & pick a winner | `-m/--models`, `-d/--dataset`, `--set-winner`, `--mock` |
-| [`recommend`](#3-hardware-recommendations-models-cli-recommend) | Zero-shot GPU/TPU & engine tuning recommendations via GKE Recommender | `-m/--model`, `-u/--use-case`, `-f/--family`, `-s/--sort-by` |
+| [`recommend`](#3-hardware-recommendations-models-cli-recommend) | Zero-shot GPU/TPU & engine tuning recommendations via GKE Inference Quickstart API | `-m/--model`, `-u/--use-case`, `-f/--family`, `-s/--sort-by` |
 | [`deploy`](#4-deploy-to-gemini-enterprise-online-prediction-models-cli-deploy) | Deploy to Gemini Enterprise Online Prediction endpoint, check status, or watch | `--dry-run`, `--status`, `-w/--watch`, `-b/--bucket` |
 | [`playground`](#5-test-endpoints-interactively-models-cli-playground) | Interactive streaming chat or prompt testing with deployed models | `-m/--message`, `-s/--system`, `-e/--endpoint`, `--raw` |
 | [`benchmark`](#6-benchmark-performance-models-cli-benchmark) | Measure TTFT, TPOT, & throughput using `inference-perf` | `-e/--endpoint`, `-c/--config`, `--mock` |
@@ -85,7 +85,7 @@ models-cli eval --models "google/gemma-4-31B-it,google/gemma-2-27b-it" --mock
 ---
 
 ### 3. Hardware Recommendations: `models-cli recommend`
-Query the Google Cloud GKE Recommender for optimized accelerator configurations (TPU v5e/v6e, NVIDIA L4/A100) and engine parameters:
+Query the Google Cloud GKE Inference Quickstart API (GKE Recommender) for optimized accelerator configurations (TPU v5e/v6e, NVIDIA L4/A100) and engine parameters:
 ```bash
 # Find lowest hourly cost setup for Gemma
 models-cli recommend --model google/gemma-4-31B-it --sort-by cost

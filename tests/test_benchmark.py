@@ -26,6 +26,48 @@ def test_generate_benchmark_config_mock(tmp_path):
     assert data["server"]["type"] == "mock"
 
 
+def test_generate_benchmark_config_strips_trailing_v1(tmp_path):
+    out_yaml = tmp_path / "config.yaml"
+    generate_benchmark_config(
+        template_config_path=None,
+        output_config_path=out_yaml,
+        model_name="google/gemma-4-31B-it",
+        endpoint_url="https://my-host.vertexai.goog/invoke/v1",
+        mock=False,
+    )
+    with open(out_yaml, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["server"]["base_url"] == "https://my-host.vertexai.goog/invoke"
+
+
+def test_generate_benchmark_config_preserves_url_without_v1(tmp_path):
+    out_yaml = tmp_path / "config.yaml"
+    generate_benchmark_config(
+        template_config_path=None,
+        output_config_path=out_yaml,
+        model_name="google/gemma-4-31B-it",
+        endpoint_url="https://my-host.vertexai.goog/invoke",
+        mock=False,
+    )
+    with open(out_yaml, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["server"]["base_url"] == "https://my-host.vertexai.goog/invoke"
+
+
+def test_generate_benchmark_config_strips_localhost_v1(tmp_path):
+    out_yaml = tmp_path / "config.yaml"
+    generate_benchmark_config(
+        template_config_path=None,
+        output_config_path=out_yaml,
+        model_name="google/gemma-4-31B-it",
+        endpoint_url="http://localhost:8080/v1/",
+        mock=False,
+    )
+    with open(out_yaml, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["server"]["base_url"] == "http://localhost:8080"
+
+
 def test_parse_lifecycle_metrics(tmp_path):
     metrics = parse_lifecycle_metrics(tmp_path)
     assert "total_requests" in metrics

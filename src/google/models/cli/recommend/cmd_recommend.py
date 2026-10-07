@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recommendation command for models-cli powered by Google Cloud GKE Recommender."""
+"""Recommendation command for models-cli powered by Google Cloud GKE Inference Quickstart API (GKE Recommender)."""
 
 import json
 from pathlib import Path
+
 import click
+import google.api_core.exceptions
+import google.auth.exceptions
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
-import google.auth.exceptions
-import google.api_core.exceptions
 
 from google.models.cli.common.auth import ensure_authenticated, is_auth_error
 from google.models.cli.common.config import settings
@@ -179,7 +180,7 @@ def recommend(
     apply: bool,
     list_models: bool,
 ) -> None:
-    """Recommends hardware configurations and engine parameters using GKE Recommender."""
+    """Recommends hardware configurations and engine parameters using the Google Cloud GKE Inference Quickstart API (GKE Recommender)."""
     # Validate custom input/output token options first
     if (input_tokens is not None and output_tokens is None) or (
         input_tokens is None and output_tokens is not None
@@ -308,6 +309,7 @@ def recommend(
     if format_type.lower() == "json":
         output_payload = {
             "model": target_model,
+            "source_api": "Google Cloud GKE Inference Quickstart API (GKE Recommender)",
             "sort_by": sort_by.lower(),
             "use_case": use_case,
             "output_input_cost_ratio": output_input_cost_ratio,
@@ -330,6 +332,9 @@ def recommend(
     console.print(
         f"\n[bold cyan]🚀 Hardware & Engine Recommendations for[/bold cyan] [bold yellow]{target_model}[/bold yellow]"
     )
+    console.print(
+        "   [dim]Powered by Google Cloud GKE Inference Quickstart API (GKE Recommender)[/dim]\n"
+    )
 
     if is_custom_dist:
         ratio_val = _format_distribution_ratio(input_tokens, output_tokens)  # type: ignore
@@ -349,7 +354,7 @@ def recommend(
     if use_case:
         meta_parts.append(f"Workload: [bold magenta]{use_case}[/bold magenta]")
     if is_custom_dist:
-        meta_parts.append(f"Profile: [bold yellow]INTERPOLATED[/bold yellow]")
+        meta_parts.append("Profile: [bold yellow]INTERPOLATED[/bold yellow]")
     if output_input_cost_ratio is not None:
         meta_parts.append(f"Ratio: [bold blue]{output_input_cost_ratio}:1[/bold blue]")
     if target_cost_per_million_input_tokens is not None:
@@ -438,6 +443,9 @@ def recommend(
         console.print(
             "[dim]~ Indicates interpolated metrics calculated for your custom token distribution.[/dim]"
         )
+    console.print(
+        "[dim]ℹ️  Recommendations and benchmark metrics provided by Google Cloud GKE Inference Quickstart API.[/dim]"
+    )
 
     top = recs[0]
     top_cost_in = (

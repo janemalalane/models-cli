@@ -114,6 +114,7 @@ def build_container_args(
             "python3",
             "-m",
             "vllm.entrypoints.openai.api_server",
+            f"--model={model_uri}",
             f"--host={host}",
             f"--port={port}",
         ]
@@ -355,7 +356,7 @@ def deploy_model_to_geap(
         return {
             "status": "DRY_RUN",
             "endpoint_resource_name": f"projects/{project_id}/locations/{location}/endpoints/simulated-endpoint-123",
-            "endpoint_url": f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/simulated-endpoint-123/invoke/v1",
+            "endpoint_url": f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/simulated-endpoint-123/invoke",
             "manifest": manifest,
         }
 
@@ -489,9 +490,9 @@ def deploy_model_to_geap(
                 )
 
     if dedicated_dns:
-        endpoint_url = f"https://{dedicated_dns}/v1/{endpoint.resource_name}/invoke/v1"
+        endpoint_url = f"https://{dedicated_dns}/v1/{endpoint.resource_name}/invoke"
     else:
-        endpoint_url = f"https://{location}-aiplatform.googleapis.com/v1/{endpoint.resource_name}/invoke/v1"
+        endpoint_url = f"https://{location}-aiplatform.googleapis.com/v1/{endpoint.resource_name}/invoke"
 
     return {
         "status": "DEPLOYED",

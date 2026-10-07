@@ -14,11 +14,12 @@
 
 """Rich console helpers and UI styling for models-cli."""
 
-from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+from google.models.cli.common.banner import display_banner
 
 console = Console()
 error_console = Console(stderr=True)
@@ -26,12 +27,7 @@ error_console = Console(stderr=True)
 
 def print_banner(title: str = "models-cli", subtitle: str | None = None) -> None:
     """Renders formatted application banner."""
-    content = Text()
-    content.append("⚡ ", style="bold yellow")
-    content.append(title, style="bold cyan")
-    if subtitle:
-        content.append(f"\n{subtitle}", style="dim")
-    console.print(Panel(content, border_style="blue", expand=False))
+    display_banner(console)
 
 
 def print_success(message: str) -> None:
