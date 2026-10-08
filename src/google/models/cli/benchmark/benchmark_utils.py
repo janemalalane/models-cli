@@ -29,6 +29,7 @@ def generate_benchmark_config(
     model_name: str,
     endpoint_url: str | None = None,
     mock: bool = False,
+    server_model_name: str | None = None,
 ) -> Path:
     """Generates an inference-perf configuration YAML file.
 
@@ -38,6 +39,8 @@ def generate_benchmark_config(
         model_name: Model identifier.
         endpoint_url: Deployed model endpoint URL.
         mock: If True, sets server.type to 'mock' and data.type to 'mock'.
+        server_model_name: Explicit override for server.model_name.
+            If None, preserves template value (typically null for auto-detection).
 
     Returns:
         Path to output configuration.
@@ -92,7 +95,7 @@ def generate_benchmark_config(
         data_dict["type"] = "mock"
         server_dict["type"] = "mock"
         server_dict["base_url"] = "http://localhost:8080"
-        server_dict["model_name"] = model_name
+        server_dict["model_name"] = server_model_name or model_name
         if "load" in config_data and "stages" in config_data["load"]:
             config_data["load"]["stages"] = [{"rate": 10.0, "duration": 1}]
     else:
@@ -119,9 +122,24 @@ def generate_benchmark_config(
         if clean_url.endswith("/v1"):
             clean_url = clean_url[:-3].rstrip("/")
 
-        server_dict["type"] = "vllm"
-        server_dict["model_name"] = model_name
+        server_dict["type"] = server_dict.get("type") or "vllm"
         server_dict["base_url"] = clean_url or "http://localhost:8080"
+        if server_model_name is not None:
+            server_dict["model_name"] = server_model_name
+        elif "model_name" not in server_dict:
+            server_dict["model_name"] = None
+
+        # Ensure tokenizer is configured with model_name (HuggingFace repo)
+        tok_dict = config_data.setdefault("tokenizer", {})
+        if not tok_dict.get("pretrained_model_name_or_path"):
+            tok_dict["pretrained_model_name_or_path"] = model_name
+        try:
+            from google.models.cli.common.config import settings
+
+            if getattr(settings, "hf_token", None) and not tok_dict.get("token"):
+                tok_dict["token"] = settings.hf_token
+        except Exception:
+            pass
 
     output_config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_config_path, "w", encoding="utf-8") as f:
@@ -178,6 +196,58 @@ def parse_lifecycle_metrics(report_dir: Path) -> dict[str, Any]:
 
 def _normalize_metrics(raw_data: dict[str, Any]) -> dict[str, Any]:
     """Normalizes inference-perf raw output JSON format."""
+    # Check if modern inference-perf schema (with 'successes' and 'failures')
+    if "successes" in raw_data or "failures" in raw_data:
+        successes = raw_data.get("successes") or {}
+        failures = raw_data.get("failures") or {}
+        load_summary = raw_data.get("load_summary") or {}
+        succ_count = successes.get("count", 0)
+        fail_count = failures.get("count", 0)
+        total_requests = load_summary.get("count", succ_count + fail_count)
+
+        throughput = successes.get("throughput") or {}
+        qps = throughput.get("requests_per_sec", 0.0)
+        tokens_sec = throughput.get("output_tokens_per_sec", 0.0)
+
+        latency = successes.get("latency") or {}
+        ttft = latency.get("time_to_first_token") or {}
+        tpot = latency.get("time_per_output_token") or {}
+        e2e = latency.get("request_latency") or {}
+
+        def _to_ms(val: Any, default: float = 0.0) -> float:
+            if isinstance(val, (int, float)):
+                return float(val) * 1000.0
+            return default
+
+        return {
+            "total_requests": total_requests,
+            "completed_requests": succ_count,
+            "failed_requests": fail_count,
+            "request_throughput_qps": qps,
+            "token_throughput_tokens_sec": tokens_sec,
+            "ttft_ms": {
+                "p50": _to_ms(ttft.get("median", ttft.get("p50"))),
+                "p90": _to_ms(ttft.get("p90")),
+                "p95": _to_ms(ttft.get("p95")),
+                "p99": _to_ms(ttft.get("p99")),
+                "mean": _to_ms(ttft.get("mean")),
+            },
+            "tpot_ms": {
+                "p50": _to_ms(tpot.get("median", tpot.get("p50"))),
+                "p90": _to_ms(tpot.get("p90")),
+                "p95": _to_ms(tpot.get("p95")),
+                "p99": _to_ms(tpot.get("p99")),
+                "mean": _to_ms(tpot.get("mean")),
+            },
+            "e2e_latency_ms": {
+                "p50": _to_ms(e2e.get("median", e2e.get("p50"))),
+                "p90": _to_ms(e2e.get("p90")),
+                "p95": _to_ms(e2e.get("p95")),
+                "p99": _to_ms(e2e.get("p99")),
+                "mean": _to_ms(e2e.get("mean")),
+            },
+        }
+
     ttft = raw_data.get("time_to_first_token_ms", {})
     tpot = raw_data.get("time_per_output_token_ms", {})
     e2e = raw_data.get("request_latency_ms", {})

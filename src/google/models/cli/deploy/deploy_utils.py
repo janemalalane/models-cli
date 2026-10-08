@@ -90,6 +90,7 @@ def build_container_args(
     engine: InferenceEngine | None = None,
     engine_params: dict[str, Any] | None = None,
     model_uri: str | None = None,
+    served_model_name: str | None = None,
 ) -> list[str]:
     """Constructs command line arguments for the container entrypoint."""
     if isinstance(target, (VLLMEngineConfig, SGLangEngineConfig)):
@@ -102,9 +103,14 @@ def build_container_args(
         else:
             engine_config = VLLMEngineConfig.from_dict(params)
 
+    from google.models.cli.common.config import settings
+
     params = engine_config.to_engine_params()
     host = params.pop("host", getattr(engine_config, "host", DEFAULT_CONTAINER_HOST))
     port = params.pop("port", getattr(engine_config, "port", DEFAULT_CONTAINER_PORT))
+    served_model_name = params.pop(
+        "served_model_name", served_model_name or settings.model_id
+    )
 
     if "trust_remote_code" not in params:
         params["trust_remote_code"] = True
@@ -115,6 +121,7 @@ def build_container_args(
             "-m",
             "vllm.entrypoints.openai.api_server",
             f"--model={model_uri}",
+            f"--served-model-name={served_model_name}",
             f"--host={host}",
             f"--port={port}",
         ]
@@ -258,6 +265,7 @@ def deploy_model_to_geap(
     model_display_name: str,
     model_uri: str,
     machine_type: str,
+    model_id: str | None = None,
     engine_config: EngineConfig | None = None,
     engine: InferenceEngine | None = None,
     engine_params: dict[str, Any] | None = None,
@@ -267,12 +275,15 @@ def deploy_model_to_geap(
     endpoint_display_name: str | None = None,
     dedicated_endpoint: bool = True,
     routes: dict[str, Any] | None = None,
+    environment_variables: dict[str, str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Deploys model to Gemini Enterprise Online Prediction Endpoint.
 
     Returns deployment metadata dict.
     """
+    from google.models.cli.common.config import settings
+
     if engine_config is not None:
         cfg = engine_config
     else:
@@ -285,19 +296,17 @@ def deploy_model_to_geap(
 
     resolved_engine = cfg.engine_enum
     resolved_container_image_uri = container_image_uri or resolved_engine.image_uri
-    container_args = build_container_args(cfg, model_uri=model_uri)
-    env_vars = resolved_engine.env_vars
+    resolved_served_model_name = model_id or settings.model_id or model_display_name
+    container_args = build_container_args(
+        cfg, model_uri=model_uri, served_model_name=resolved_served_model_name
+    )
+    env_vars = {**resolved_engine.env_vars, **(environment_variables or {})}
     resolved_endpoint_display_name = (
         endpoint_display_name or f"{model_display_name}-endpoint"
     )
     resolved_shared_memory_mb = shared_memory_mb or DEFAULT_SHARED_MEMORY_MB
 
     hardware_spec = HARDWARE_SPECS.get(machine_type, {})
-
-    if not hardware_spec:
-        raise click.ClickException(
-            f"Unsupported machine type on Gemini Enterprise Online Prediction: {machine_type}"
-        )
 
     raw_accelerator_type = hardware_spec.get("accelerator_type")
     accelerator_type = (

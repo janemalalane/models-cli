@@ -291,25 +291,6 @@ def resolve_endpoint_and_base_url(
     help="Model identifier to specify in the Chat Completions request. Defaults to MODEL_ID or default model repo.",
 )
 @click.option(
-    "--temperature",
-    "-t",
-    default=0.7,
-    type=float,
-    help="Sampling temperature between 0.0 and 2.0 (default: 0.7).",
-)
-@click.option(
-    "--max-tokens",
-    default=1024,
-    type=int,
-    help="Maximum number of tokens to generate in chat completion (default: 1024).",
-)
-@click.option(
-    "--top-p",
-    default=0.95,
-    type=float,
-    help="Nucleus sampling probability (default: 0.95).",
-)
-@click.option(
     "--stream/--no-stream",
     default=True,
     help="Stream response tokens in real-time (default: True).",
@@ -346,9 +327,6 @@ def playground(
     system: str | None = None,
     endpoint: str | None = None,
     model: str | None = None,
-    temperature: float = 0.7,
-    max_tokens: int = 1024,
-    top_p: float = 0.95,
     stream: bool = True,
     project: str | None = None,
     region: str | None = None,
@@ -386,11 +364,42 @@ def playground(
         location=region,
     )
 
-    resolved_model = (
+    initial_model = (
         model or settings.model_id or deployed_model_name or DEFAULT_MODEL_REPO
     )
+    resolved_model = initial_model
 
     client = _get_openai_client(base_url)
+
+    # Auto-detect actual model served on the endpoint to avoid 404 model not found errors
+    try:
+        remote_models = [
+            m.id for m in client.models.list().data if m and getattr(m, "id", None)
+        ]
+    except Exception:
+        if "/v1beta1/" in base_url:
+            try:
+                alt_client = _get_openai_client(base_url.replace("/v1beta1/", "/v1/"))
+                remote_models = [
+                    m.id
+                    for m in alt_client.models.list().data
+                    if m and getattr(m, "id", None)
+                ]
+            except Exception:
+                remote_models = []
+        else:
+            remote_models = []
+
+    if remote_models and resolved_model not in remote_models:
+        if len(remote_models) == 1:
+            logger.debug(
+                "Requested model '%s' not recognized by endpoint. Auto-selecting served model '%s'.",
+                resolved_model,
+                remote_models[0],
+            )
+            resolved_model = remote_models[0]
+        elif not model:
+            resolved_model = remote_models[0]
 
     effective_prompt = message if message is not None else prompt
     use_chat = api.lower() == "chat"
@@ -407,9 +416,6 @@ def playground(
                 resp = client.chat.completions.create(
                     model=resolved_model,
                     messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
                     stream=False,
                 )
                 click.echo(resp.model_dump_json(indent=2))
@@ -419,9 +425,6 @@ def playground(
                 response_stream = client.chat.completions.create(
                     model=resolved_model,
                     messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
                     stream=True,
                 )
                 thought_header_printed = False
@@ -447,9 +450,6 @@ def playground(
                 response = client.chat.completions.create(
                     model=resolved_model,
                     messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
                     stream=False,
                 )
                 msg = response.choices[0].message if response.choices else None
@@ -470,9 +470,6 @@ def playground(
             resp = client.completions.create(
                 model=resolved_model,
                 prompt=prompt_text,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
                 stream=False,
             )
             click.echo(resp.model_dump_json(indent=2))
@@ -482,9 +479,6 @@ def playground(
             comp_stream = client.completions.create(
                 model=resolved_model,
                 prompt=prompt_text,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
                 stream=True,
             )
             for chunk in comp_stream:
@@ -495,21 +489,23 @@ def playground(
             comp_resp = client.completions.create(
                 model=resolved_model,
                 prompt=prompt_text,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
                 stream=False,
             )
             content = (
                 comp_resp.choices[0].text if comp_resp.choices else ""
             ) or ""
             console.print(Markdown(content))
-        return
+            return
 
     # 2. Interactive session (REPL)
+    display_model_str = (
+        f"{initial_model} [dim](serving ID: {resolved_model})[/dim]"
+        if initial_model and initial_model != resolved_model
+        else resolved_model
+    )
     header_info = (
         f"[bold cyan]Endpoint:[/bold cyan]  {ep_identifier}\n"
-        f"[bold cyan]Model:[/bold cyan]     {resolved_model}\n"
+        f"[bold cyan]Model:[/bold cyan]     {display_model_str}\n"
         f"[bold cyan]Base URL:[/bold cyan]  {base_url}\n"
         f"[bold cyan]API:[/bold cyan]       {api.lower()}\n\n"
         "[dim]Commands: [bold]'exit'[/bold], [bold]'quit'[/bold], or [bold]'q'[/bold] to leave • [bold]'/clear'[/bold] to reset history[/dim]"
@@ -552,9 +548,6 @@ def playground(
                     chat_stream = client.chat.completions.create(
                         model=resolved_model,
                         messages=history,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        top_p=top_p,
                         stream=True,
                     )
                     for chunk in chat_stream:
@@ -602,9 +595,6 @@ def playground(
                     resp = client.chat.completions.create(
                         model=resolved_model,
                         messages=history,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        top_p=top_p,
                         stream=False,
                     )
                     msg = resp.choices[0].message if resp.choices else None
@@ -645,9 +635,6 @@ def playground(
                     comp_stream = client.completions.create(
                         model=resolved_model,
                         prompt=session_prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        top_p=top_p,
                         stop=["\nUser:", "\nAssistant:", "\n\nUser:"],
                         stream=True,
                     )
@@ -666,9 +653,6 @@ def playground(
                     resp = client.completions.create(
                         model=resolved_model,
                         prompt=session_prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        top_p=top_p,
                         stop=["\nUser:", "\nAssistant:", "\n\nUser:"],
                         stream=False,
                     )

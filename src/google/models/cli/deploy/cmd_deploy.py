@@ -293,6 +293,7 @@ def deploy(
         project_id=project_id,
         location=resolved_location,
         model_display_name=model_display_name,
+        model_id=model_repo,
         endpoint_display_name=endpoint_display_name,
         model_uri=model_uri,
         service_account_email=service_account_email,
@@ -302,6 +303,7 @@ def deploy(
         container_image_uri=deployment_config.container_image_uri or None,
         dedicated_endpoint=deployment_config.dedicated_endpoint,
         routes=deployment_config.routes,
+        environment_variables=deployment_config.environment_variables,
         dry_run=dry_run,
     )
 

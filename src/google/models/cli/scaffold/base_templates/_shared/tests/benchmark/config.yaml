@@ -44,3 +44,6 @@ server:
   model_name: null
   base_url: null
   api_key: null
+tokenizer:
+  pretrained_model_name_or_path: "{model_id}"
+

@@ -56,6 +56,7 @@ class DeploymentConfig:
     dedicated_endpoint: bool = True
     shared_memory_mb: int = DEFAULT_SHARED_MEMORY_MB
     routes: dict[str, str] = field(default_factory=_default_routes)
+    environment_variables: dict[str, str] = field(default_factory=dict)
     raw_config: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -81,6 +82,16 @@ class DeploymentConfig:
             cfg.dedicated_endpoint = bool(data["dedicated_endpoint"])
         if "routes" in data and isinstance(data["routes"], Mapping):
             cfg.routes = {**cfg.routes, **data["routes"]}
+        if "environment_variables" in data and isinstance(
+            data["environment_variables"], Mapping
+        ):
+            cfg.environment_variables = {
+                str(k): str(v) for k, v in data["environment_variables"].items()
+            }
+        elif "env_vars" in data and isinstance(data["env_vars"], Mapping):
+            cfg.environment_variables = {
+                str(k): str(v) for k, v in data["env_vars"].items()
+            }
 
         return cfg
 

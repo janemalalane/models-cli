@@ -2,6 +2,7 @@ import getpass
 import sys
 from pathlib import Path
 import pytest
+import yaml
 from click.testing import CliRunner
 from google.models.cli.main import app
 from google.models.cli.scaffold.scaffold_utils import (
@@ -53,6 +54,11 @@ def test_copy_and_render_templates(tmp_path):
     assert (dest / "tests" / "eval" / "golden_dataset.jsonl").is_file()
     assert (dest / "tests" / "benchmark" / "config.yaml").is_file()
     assert (dest / "reports").is_dir()
+
+    # Check benchmark config server.model_name is null and tokenizer is populated with model_id
+    bench_data = yaml.safe_load((dest / "tests" / "benchmark" / "config.yaml").read_text(encoding="utf-8"))
+    assert bench_data["server"]["model_name"] is None
+    assert bench_data["tokenizer"]["pretrained_model_name_or_path"] == "google/gemma-4-31B-it"
 
     # Check content substitution in .env (populated with actual values)
     env_content = (dest / ".env").read_text(encoding="utf-8")

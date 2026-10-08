@@ -16,8 +16,15 @@ runner = CliRunner()
 
 
 def test_build_container_args_vllm():
-    args = build_container_args("gs://my-bucket/gemma-31b", engine=InferenceEngine.VLLM)
+    args = build_container_args(
+        "gs://my-bucket/gemma-31b",
+        engine=InferenceEngine.VLLM,
+        model_uri="gs://my-bucket/gemma-31b",
+        served_model_name="google/gemma-4-31B-it",
+    )
     assert args[:3] == ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+    assert "--model=gs://my-bucket/gemma-31b" in args
+    assert "--served-model-name=google/gemma-4-31B-it" in args
     assert "--host=0.0.0.0" in args
     assert "--port=8080" in args
 
@@ -64,6 +71,7 @@ def test_deploy_model_dry_run():
         project_id="test-proj",
         location="us-central1",
         model_display_name="gemma-31b",
+        model_id="google/gemma-4-31B-it",
         model_uri="gs://test-proj-models/gemma-4-31B-it",
         service_account_email="sa@test-proj.iam.gserviceaccount.com",
         machine_type="ct6e-standard-4t",
@@ -76,6 +84,8 @@ def test_deploy_model_dry_run():
     assert manifest["endpoint_display_name"] == "gemma-31b-endpoint"
     assert manifest["dedicated_endpoint_enabled"] is True
     assert manifest["engine"] == "vllm"
+    assert "--model=gs://test-proj-models/gemma-4-31B-it" in manifest["container_args"]
+    assert "--served-model-name=google/gemma-4-31B-it" in manifest["container_args"]
     assert manifest["container_env_vars"] == {
         "VLLM_LOGGING_LEVEL": "INFO",
         "HF_HOME": "/dev/shm/hf",
@@ -1238,5 +1248,134 @@ def test_container_args_omits_unconfigured_engine_options():
     assert not any(arg.startswith("--pipeline-parallel-size") for arg in args)
     assert "--enable-prefix-caching" not in args
     assert "--enable-chunked-prefill" not in args
+
+
+def test_deploy_arbitrary_machine_type_not_in_constants_dry_run():
+    """Verify that arbitrary machine types like c4-highmem-96 are accepted without needing constants."""
+    result = deploy_model_to_geap(
+        project_id="test-proj",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://test-proj-models/gemma-4-31B-it",
+        service_account_email="sa@test-proj.iam.gserviceaccount.com",
+        machine_type="c4-highmem-96",
+        engine=InferenceEngine.VLLM,
+        dry_run=True,
+    )
+    assert result["status"] == "DRY_RUN"
+    manifest = result["manifest"]
+    assert manifest["machine_type"] == "c4-highmem-96"
+    assert "accelerator_type" not in manifest
+    assert "accelerator_count" not in manifest
+
+
+def test_deploy_arbitrary_cpu_machine_type_dedicated_resources(monkeypatch):
+    """Verify live deploy configures dedicated_resources without accelerator for CPU machine types."""
+    from unittest.mock import MagicMock
+    from google.cloud import aiplatform, aiplatform_v1
+
+    fake_model = MagicMock()
+    fake_model.resource_name = "projects/123/locations/us-central1/models/456"
+    fake_endpoint = MagicMock()
+    fake_endpoint.resource_name = "projects/123/locations/us-central1/endpoints/789"
+    fake_endpoint.dedicated_endpoint_enabled = False
+
+    captured_deployed_model = []
+    mock_client = MagicMock()
+    mock_future = MagicMock()
+    mock_future.operation.name = "projects/123/locations/us-central1/operations/999"
+
+    def fake_deploy_model(endpoint, deployed_model, **kwargs):
+        captured_deployed_model.append(deployed_model)
+        return mock_future
+
+    mock_client.deploy_model = fake_deploy_model
+
+    monkeypatch.setattr(aiplatform, "init", lambda **kwargs: None)
+    monkeypatch.setattr(aiplatform.Model, "upload", lambda **kwargs: fake_model)
+    monkeypatch.setattr(aiplatform.Endpoint, "create", lambda **kwargs: fake_endpoint)
+    monkeypatch.setattr(
+        aiplatform_v1, "EndpointServiceClient", lambda client_options=None: mock_client
+    )
+
+    result = deploy_model_to_geap(
+        project_id="test-proj",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://test-proj-models/gemma-31b",
+        machine_type="c4-highmem-96",
+        dedicated_endpoint=False,
+        dry_run=False,
+    )
+
+    assert result["status"] == "DEPLOYED"
+    assert len(captured_deployed_model) == 1
+    dep_model = captured_deployed_model[0]
+    machine_spec = dep_model.dedicated_resources.machine_spec
+    assert machine_spec.machine_type == "c4-highmem-96"
+    assert not machine_spec.accelerator_type
+
+
+def test_deploy_command_with_arbitrary_machine_type(monkeypatch):
+    """Verify models-cli deploy succeeds with c4-highmem-96 in dry-run without constant errors."""
+    import google.models.cli.deploy.cmd_deploy as cmd_deploy_mod
+
+    monkeypatch.setattr(
+        cmd_deploy_mod, "ensure_authenticated", lambda interactive: True
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod,
+        "read_deployment_config",
+        lambda project_dir=None: DeploymentConfig(machine_type="c4-highmem-96"),
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod, "check_bucket_exists", lambda bucket: True
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod,
+        "check_model_exists_in_gcs",
+        lambda bucket, repo: True,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "deploy",
+            "--model-id",
+            "google/gemma-4-31B-it",
+            "--bucket",
+            "my-custom-bucket",
+            "--project",
+            "test-project-123",
+            "--region",
+            "us-central1",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Dry run validation succeeded" in result.output
+    assert '"machine_type": "c4-highmem-96"' in result.output
+    assert "Unsupported machine type" not in result.output
+
+
+def test_deploy_custom_environment_variables():
+    """Verify custom environment_variables override or merge with default engine env_vars."""
+    result = deploy_model_to_geap(
+        project_id="test-proj",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://test-proj-models/gemma-31b",
+        machine_type="n2-highmem-48",
+        environment_variables={"LOCAL_MODEL_DIR": "/tmp/model_dir", "CUSTOM_VAR": "foo"},
+        dry_run=True,
+    )
+    assert result["status"] == "DRY_RUN"
+    env_vars = result["manifest"]["container_env_vars"]
+    assert env_vars["LOCAL_MODEL_DIR"] == "/tmp/model_dir"
+    assert env_vars["CUSTOM_VAR"] == "foo"
+    assert env_vars["VLLM_LOGGING_LEVEL"] == "INFO"
+
+
+
 
 

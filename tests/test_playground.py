@@ -412,3 +412,36 @@ def test_get_openai_client_appends_v1(monkeypatch):
 
     client3 = pg_mod._get_openai_client("http://localhost:8080")
     assert str(client3.base_url).rstrip("/") == "http://localhost:8080/v1"
+
+
+def test_playground_auto_detects_served_model(monkeypatch):
+    """Verify playground auto-selects served model when requested model is not listed."""
+    import google.models.cli.playground.cmd_playground as pg_mod
+
+    monkeypatch.setattr(pg_mod, "ensure_authenticated", lambda interactive: True)
+    monkeypatch.setattr(
+        pg_mod,
+        "resolve_endpoint_and_base_url",
+        lambda **kwargs: (
+            "https://test-url/invoke/v1",
+            "ep-123",
+            "gemma",
+        ),
+    )
+
+    mock_client = MagicMock()
+    mock_model_obj = MagicMock()
+    mock_model_obj.id = "/tmp/model_dir"
+    mock_client.models.list.return_value = MagicMock(data=[mock_model_obj])
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [MagicMock(delta=MagicMock(content="Hello from /tmp/model_dir"))]
+    mock_client.chat.completions.create.return_value = [mock_chunk]
+    monkeypatch.setattr(pg_mod, "_get_openai_client", lambda base_url: mock_client)
+
+    result = runner.invoke(app, ["playground", "--model", "google/diffusiongemma-26B-A4B-it", "hi"])
+    assert result.exit_code == 0
+    assert "Hello from /tmp/model_dir" in result.output
+
+    call_kwargs = mock_client.chat.completions.create.call_args[1]
+    assert call_kwargs["model"] == "/tmp/model_dir"

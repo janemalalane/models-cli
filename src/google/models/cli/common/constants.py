@@ -77,8 +77,6 @@ class AcceleratorType(str, Enum):
     NVIDIA_GB200 = "NVIDIA_GB200"
     NVIDIA_L4 = "NVIDIA_L4"
     NVIDIA_RTX_PRO_6000 = "NVIDIA_RTX_PRO_6000"
-    TPU_V5_LITEPOD = "TPU_V5_LITEPOD"
-    TPU_V6E = "TPU_V6E"
 
 
 class OptimizationMetric(str, Enum):
@@ -413,71 +411,5 @@ HARDWARE_SPECS: dict[str, dict] = {
         "hourly_cost_usd": 20.80,
         "memory_bandwidth_gb_s": 13600,
         "description": "8x RTX PRO 6000 GPU cluster for massive multi-GPU model serving",
-    },
-    # Google TPUs
-    "ct5lp-hightpu-1t": {
-        "family": AcceleratorFamily.TPU,
-        "chip_name": "Google TPU v5e (1-chip)",
-        "accelerator_type": AcceleratorType.TPU_V5_LITEPOD.value,
-        "accelerator_count": 1,
-        "vram_gb": 16,
-        "hourly_cost_usd": 1.20,
-        "memory_bandwidth_gb_s": 819,
-        "description": "Cost-efficient TPU v5e single core",
-    },
-    "ct5lp-hightpu-4t": {
-        "family": AcceleratorFamily.TPU,
-        "chip_name": "Google TPU v5e (4-chip)",
-        "accelerator_type": AcceleratorType.TPU_V5_LITEPOD.value,
-        "accelerator_count": 4,
-        "vram_gb": 64,
-        "hourly_cost_usd": 4.80,
-        "memory_bandwidth_gb_s": 3276,
-        "description": "TPU v5e 4-chip pod for medium open models",
-    },
-    "ct6e-standard-1t": {
-        "family": AcceleratorFamily.TPU,
-        "chip_name": "Google Trillium TPU v6e (1-chip)",
-        "accelerator_type": AcceleratorType.TPU_V6E.value,
-        "accelerator_count": 1,
-        "vram_gb": 32,
-        "hourly_cost_usd": 1.80,
-        "memory_bandwidth_gb_s": 1640,
-        "description": "Next-gen Trillium TPU optimized for low TPOT and high token throughput",
-    },
-    "ct6e-standard-4t": {
-        "family": AcceleratorFamily.TPU,
-        "chip_name": "Google Trillium TPU v6e (4-chip)",
-        "accelerator_type": AcceleratorType.TPU_V6E.value,
-        "accelerator_count": 4,
-        "vram_gb": 128,
-        "hourly_cost_usd": 7.20,
-        "memory_bandwidth_gb_s": 6560,
-        "description": "Trillium TPU 4-chip configuration for high-concurrency production serving",
-    },
-    "ct6e-standard-8t": {
-        "family": AcceleratorFamily.TPU,
-        "chip_name": "Google Trillium TPU v6e (8-chip)",
-        "accelerator_type": AcceleratorType.TPU_V6E.value,
-        "accelerator_count": 8,
-        "vram_gb": 256,
-        "hourly_cost_usd": 14.40,
-        "memory_bandwidth_gb_s": 13120,
-        "description": "Trillium TPU 8-chip configuration for ultra-scale LLM inference",
-    },
-    "c4-standard-192": {
-        "family": "cpu",
-    },
-    "c4-standard-96": {
-        "family": "cpu",
-    },
-    "c4-standard-48": {
-        "family": "cpu",
-    },
-    "n2-standard-48": {
-        "family": "cpu",
-    },
-    "n2-standard-32": {
-        "family": "cpu",
     },
 }

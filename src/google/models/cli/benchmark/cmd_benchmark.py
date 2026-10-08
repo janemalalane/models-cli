@@ -14,6 +14,7 @@
 
 """Benchmarking command for models-cli."""
 
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -125,6 +126,7 @@ def benchmark(
         model_name=target_model,
         endpoint_url=target_endpoint,
         mock=mock,
+        server_model_name=model,
     )
 
     console.print(
@@ -167,12 +169,24 @@ def benchmark(
                 display_cmd.append(arg)
 
         console.print(f"Executing: [dim]{' '.join(display_cmd)}[/dim]")
+        compat_dir = str(Path(__file__).parent / "_compat")
+        old_pythonpath = os.environ.get("PYTHONPATH")
         try:
+            os.environ["PYTHONPATH"] = (
+                f"{compat_dir}:{old_pythonpath}"
+                if old_pythonpath
+                else compat_dir
+            )
             subprocess.run(cmd, check=True)
         except Exception as e:
             console.print(
                 f"[bold yellow]⚠️ inference-perf execution warning: {e}[/bold yellow]"
             )
+        finally:
+            if old_pythonpath is not None:
+                os.environ["PYTHONPATH"] = old_pythonpath
+            else:
+                os.environ.pop("PYTHONPATH", None)
     else:
         if mock:
             console.print(

@@ -196,3 +196,35 @@ def test_benchmark_live_passes_server_api_key(monkeypatch, tmp_path):
     idx = captured_cmd.index("--server.api_key")
     assert captured_cmd[idx + 1] == "secret-token-123"
     assert "--server.http_headers.Authorization" not in captured_cmd
+
+
+def test_generate_benchmark_config_server_model_name_defaults_null_and_tokenizer_populated(tmp_path):
+    out_yaml = tmp_path / "config.yaml"
+    generate_benchmark_config(
+        template_config_path=None,
+        output_config_path=out_yaml,
+        model_name="google/diffusiongemma-26B-A4B-it",
+        endpoint_url="https://my-host.vertexai.goog/invoke",
+        mock=False,
+    )
+    with open(out_yaml, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["server"]["model_name"] is None
+    assert data["tokenizer"]["pretrained_model_name_or_path"] == "google/diffusiongemma-26B-A4B-it"
+
+
+def test_generate_benchmark_config_server_model_name_override(tmp_path):
+    out_yaml = tmp_path / "config.yaml"
+    generate_benchmark_config(
+        template_config_path=None,
+        output_config_path=out_yaml,
+        model_name="google/diffusiongemma-26B-A4B-it",
+        endpoint_url="https://my-host.vertexai.goog/invoke",
+        mock=False,
+        server_model_name="/tmp/model_dir",
+    )
+    with open(out_yaml, "r") as f:
+        data = yaml.safe_load(f)
+    assert data["server"]["model_name"] == "/tmp/model_dir"
+    assert data["tokenizer"]["pretrained_model_name_or_path"] == "google/diffusiongemma-26B-A4B-it"
+

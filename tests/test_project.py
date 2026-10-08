@@ -35,6 +35,7 @@ def test_deployment_config_from_dict_flat():
         "dedicated_endpoint": False,
         "shared_memory_mb": 65536,
         "routes": {"predict": "/v1/chat/completions", "health": "/ready", "port": 8000},
+        "environment_variables": {"LOCAL_MODEL_DIR": "/tmp/model_dir"},
     }
     cfg = DeploymentConfig.from_dict(data)
     assert cfg.display_name == "my-endpoint"
@@ -44,6 +45,7 @@ def test_deployment_config_from_dict_flat():
     assert cfg.dedicated_endpoint is False
     assert cfg.shared_memory_mb == 65536
     assert cfg.routes == {"predict": "/v1/chat/completions", "health": "/ready", "port": 8000}
+    assert cfg.environment_variables == {"LOCAL_MODEL_DIR": "/tmp/model_dir"}
 
 
 def test_deployment_config_malformed_raises_click_exception():

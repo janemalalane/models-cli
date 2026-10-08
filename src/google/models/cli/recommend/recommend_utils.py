@@ -24,7 +24,6 @@ import yaml
 
 from google.models.cli.common.constants import (
     DEFAULT_PRICING_MODEL,
-    HARDWARE_SPECS,
     AcceleratorFamily,
 )
 
@@ -40,12 +39,28 @@ class ModelNotSupportedError(Exception):
         self.supported_models = supported_models
 
 
+def _create_recommender_client() -> Any:
+    """Creates a GkeInferenceQuickstartClient with quota_project_id (x-goog-user-project) set."""
+    import google.cloud.gkerecommender_v1 as gke_rec
+
+    from google.models.cli._gcp_project import resolve_gcp_project
+    from google.models.cli.common.config import Settings, settings
+
+    quota_project = resolve_gcp_project(
+        override_project=settings.google_cloud_project
+        or Settings().google_cloud_project
+    )
+    if quota_project:
+        return gke_rec.GkeInferenceQuickstartClient(
+            client_options={"quota_project_id": quota_project}
+        )
+    return gke_rec.GkeInferenceQuickstartClient()
+
+
 def fetch_supported_models(client: Any | None = None) -> list[str]:
     """Fetches the list of supported model repositories from GKE Recommender."""
     if client is None:
-        import google.cloud.gkerecommender_v1 as gke_rec
-
-        client = gke_rec.GkeInferenceQuickstartClient()
+        client = _create_recommender_client()
 
     import google.cloud.gkerecommender_v1 as gke_rec
 
@@ -274,11 +289,8 @@ def get_recommendations(
         ModelNotSupportedError: If model is not supported by GKE Recommender service.
     """
     if client is None:
-        import google.cloud.gkerecommender_v1 as gke_rec
-
-        client = gke_rec.GkeInferenceQuickstartClient()
-    else:
-        import google.cloud.gkerecommender_v1 as gke_rec
+        client = _create_recommender_client()
+    import google.cloud.gkerecommender_v1 as gke_rec
 
     # 1. Build target Cost
     cost_kwargs = {}
@@ -516,14 +528,6 @@ def apply_recommendation(
     updated = False
 
     machine_type = top_candidate["machine_type"]
-    accel_type = top_candidate.get("accelerator_type")
-    accel_count = top_candidate.get("accelerator_count")
-
-    # Fallback to HARDWARE_SPECS if not directly present in candidate
-    if not accel_type or not accel_count:
-        spec = HARDWARE_SPECS.get(machine_type, {})
-        accel_type = accel_type or spec.get("accelerator_type")
-        accel_count = accel_count or spec.get("accelerator_count", 1)
 
     # 1. Update config/deployment_spec.yaml
     deploy_file = project_dir / "config" / "deployment_spec.yaml"
@@ -532,10 +536,6 @@ def apply_recommendation(
             with open(deploy_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             data["machine_type"] = machine_type
-            if accel_type:
-                data["accelerator_type"] = accel_type
-            if accel_count:
-                data["accelerator_count"] = accel_count
             with open(deploy_file, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
             updated = True

@@ -220,8 +220,8 @@ def test_apply_recommendation(tmp_path):
     with open(deploy_file, "r") as f:
         deploy_data = yaml.safe_load(f)
     assert deploy_data["machine_type"] == "g2-standard-12"
-    assert deploy_data["accelerator_type"] == "nvidia-l4"
-    assert deploy_data["accelerator_count"] == 1
+    assert "accelerator_type" not in deploy_data
+    assert "accelerator_count" not in deploy_data
 
 
 def test_cli_list_models(monkeypatch):
@@ -528,5 +528,37 @@ def test_cli_recommend_displays_token_lengths_in_use_case(monkeypatch):
     assert "Use Case (In/Out)" in result.output
 
 
+def test_create_recommender_client_uses_quota_project(monkeypatch):
+    import google.cloud.gkerecommender_v1 as gke_rec
+    from google.models.cli.common.config import settings
+    from google.models.cli.recommend.recommend_utils import _create_recommender_client
+
+    mock_cls = MagicMock()
+    monkeypatch.setattr(gke_rec, "GkeInferenceQuickstartClient", mock_cls)
+    monkeypatch.setattr(settings, "google_cloud_project", "my-scaffolded-project")
+
+    _create_recommender_client()
+
+    mock_cls.assert_called_once_with(
+        client_options={"quota_project_id": "my-scaffolded-project"}
+    )
 
 
+def test_create_recommender_client_without_project(monkeypatch, tmp_path):
+    import google.cloud.gkerecommender_v1 as gke_rec
+    from google.models.cli.common.config import settings
+    from google.models.cli.recommend.recommend_utils import _create_recommender_client
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.setattr(settings, "google_cloud_project", None)
+    monkeypatch.setattr(
+        "google.models.cli._gcp_project.resolve_gcp_project",
+        lambda override_project=None, **kwargs: override_project or "",
+    )
+    mock_cls = MagicMock()
+    monkeypatch.setattr(gke_rec, "GkeInferenceQuickstartClient", mock_cls)
+
+    _create_recommender_client()
+
+    mock_cls.assert_called_once_with()
