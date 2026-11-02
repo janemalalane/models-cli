@@ -18,11 +18,17 @@ import json
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 import click
-from google.cloud import aiplatform, aiplatform_v1, resourcemanager_v3, storage
+from google.cloud import (
+    aiplatform,
+    aiplatform_v1,
+    aiplatform_v1beta1,
+    resourcemanager_v3,
+    storage,
+)
 from google.iam.v1 import policy_pb2
 from google.longrunning import operations_pb2
 from google.protobuf.json_format import MessageToDict
@@ -276,9 +282,15 @@ def deploy_model_to_geap(
     dedicated_endpoint: bool = True,
     routes: dict[str, Any] | None = None,
     environment_variables: dict[str, str] | None = None,
+    scale_to_zero: bool = False,
+    min_scaleup_period_seconds: int | None = None,
+    idle_scaledown_period_seconds: int | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Deploys model to Gemini Enterprise Online Prediction Endpoint.
+
+    When ``scale_to_zero`` is set, the model is deployed with min_replica_count=0
+    and a scale_to_zero_spec (v1beta1 API), so replicas are removed when idle.
 
     Returns deployment metadata dict.
     """
@@ -360,6 +372,19 @@ def deploy_model_to_geap(
         manifest["routes"] = resolved_routes
     if shared_memory_mb and shared_memory_mb != DEFAULT_SHARED_MEMORY_MB:
         manifest["shared_memory_mb"] = shared_memory_mb
+    if scale_to_zero:
+        manifest["min_replica_count"] = 0
+        manifest["max_replica_count"] = 1
+        scale_to_zero_manifest = {
+            key: value
+            for key, value in {
+                "min_scaleup_period_seconds": min_scaleup_period_seconds,
+                "idle_scaledown_period_seconds": idle_scaledown_period_seconds,
+            }.items()
+            if value is not None
+        }
+        if scale_to_zero_manifest:
+            manifest["scale_to_zero_spec"] = scale_to_zero_manifest
 
     if dry_run:
         return {
@@ -409,7 +434,9 @@ def deploy_model_to_geap(
             dedicated_endpoint_enabled=dedicated_endpoint,
         )
 
-        endpoint_service_client = aiplatform_v1.EndpointServiceClient(
+        # Scale-to-zero is only exposed in the v1beta1 API (gcloud beta).
+        api = aiplatform_v1beta1 if scale_to_zero else aiplatform_v1
+        endpoint_service_client = api.EndpointServiceClient(
             client_options={"api_endpoint": f"{location}-aiplatform.googleapis.com"}
         )
 
@@ -417,9 +444,18 @@ def deploy_model_to_geap(
             "machine_spec": {
                 "machine_type": machine_type,
             },
-            "min_replica_count": 1,
+            "min_replica_count": 0 if scale_to_zero else 1,
             "max_replica_count": 1,
         }
+        if scale_to_zero:
+            dedicated_resources["scale_to_zero_spec"] = {
+                key: timedelta(seconds=value)
+                for key, value in {
+                    "min_scaleup_period": min_scaleup_period_seconds,
+                    "idle_scaledown_period": idle_scaledown_period_seconds,
+                }.items()
+                if value is not None
+            }
         if (
             accelerator_type
             and accelerator_count
@@ -428,7 +464,7 @@ def deploy_model_to_geap(
             dedicated_resources["machine_spec"]["accelerator_type"] = accelerator_type
             dedicated_resources["machine_spec"]["accelerator_count"] = accelerator_count
 
-        deployed_model = aiplatform_v1.DeployedModel(
+        deployed_model = api.DeployedModel(
             model=model.resource_name,
             display_name=model_display_name,
             dedicated_resources=dedicated_resources,

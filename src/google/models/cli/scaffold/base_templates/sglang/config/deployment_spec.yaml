@@ -5,3 +5,7 @@ machine_type: null
 service_account: null
 # shared_memory_mb: 65536
 
+# Scale replicas to zero when idle (requires the v1beta1 API; same as `gcloud beta ... --min-replica-count=0`).
+# scale_to_zero: true
+# min_scaleup_period_seconds: 300
+# idle_scaledown_period_seconds: 3600

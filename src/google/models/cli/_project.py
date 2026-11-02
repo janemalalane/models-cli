@@ -55,6 +55,9 @@ class DeploymentConfig:
     service_account: str | None = None
     dedicated_endpoint: bool = True
     shared_memory_mb: int = DEFAULT_SHARED_MEMORY_MB
+    scale_to_zero: bool = False
+    min_scaleup_period_seconds: int | None = None
+    idle_scaledown_period_seconds: int | None = None
     routes: dict[str, str] = field(default_factory=_default_routes)
     environment_variables: dict[str, str] = field(default_factory=dict)
     raw_config: dict[str, Any] = field(default_factory=dict)
@@ -80,6 +83,11 @@ class DeploymentConfig:
         cfg.shared_memory_mb = data.get("shared_memory_mb", cfg.shared_memory_mb)
         if "dedicated_endpoint" in data:
             cfg.dedicated_endpoint = bool(data["dedicated_endpoint"])
+        if "scale_to_zero" in data:
+            cfg.scale_to_zero = bool(data["scale_to_zero"])
+        for key in ("min_scaleup_period_seconds", "idle_scaledown_period_seconds"):
+            if data.get(key) is not None:
+                setattr(cfg, key, int(data[key]))
         if "routes" in data and isinstance(data["routes"], Mapping):
             cfg.routes = {**cfg.routes, **data["routes"]}
         if "environment_variables" in data and isinstance(
