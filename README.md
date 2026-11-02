@@ -116,6 +116,16 @@ models-cli deploy --status
 
 # 4. Stream status and live logs until endpoint deployment is active
 models-cli deploy --status --watch
+
+# 5. Scale to zero when idle (v1beta1 API, like `gcloud beta ... --min-replica-count=0`)
+models-cli deploy --scale-to-zero
+```
+
+Scale-to-zero can also be set in `config/deployment_spec.yaml` (the CLI flag overrides it):
+```yaml
+scale_to_zero: true
+min_scaleup_period_seconds: 300      # optional
+idle_scaledown_period_seconds: 3600  # optional
 ```
 
 ---

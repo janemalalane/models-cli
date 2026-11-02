@@ -87,6 +87,11 @@ from google.models.cli.deploy.deploy_utils import (
     help="Validate parameters and output deployment manifest without executing GCP API calls.",
 )
 @click.option(
+    "--scale-to-zero/--no-scale-to-zero",
+    default=None,
+    help="Scale replicas down to zero when idle (uses the v1beta1 API). Overrides 'scale_to_zero' in deployment_spec.yaml.",
+)
+@click.option(
     "--status",
     is_flag=True,
     default=False,
@@ -112,6 +117,7 @@ def deploy(
     service_account: str | None = None,
     base_path: str | None = None,
     dry_run: bool = False,
+    scale_to_zero: bool | None = None,
     status: bool = False,
     watch: bool = False,
     operation: str | None = None,
@@ -289,6 +295,10 @@ def deploy(
         else f"{model_display_name}-endpoint"
     )
 
+    resolved_scale_to_zero = (
+        deployment_config.scale_to_zero if scale_to_zero is None else scale_to_zero
+    )
+
     result = deploy_model_to_geap(
         project_id=project_id,
         location=resolved_location,
@@ -304,6 +314,9 @@ def deploy(
         dedicated_endpoint=deployment_config.dedicated_endpoint,
         routes=deployment_config.routes,
         environment_variables=deployment_config.environment_variables,
+        scale_to_zero=resolved_scale_to_zero,
+        min_scaleup_period_seconds=deployment_config.min_scaleup_period_seconds,
+        idle_scaledown_period_seconds=deployment_config.idle_scaledown_period_seconds,
         dry_run=dry_run,
     )
 

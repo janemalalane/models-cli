@@ -1379,3 +1379,82 @@ def test_deploy_custom_environment_variables():
 
 
 
+
+
+def test_deploy_model_dry_run_scale_to_zero_manifest():
+    result = deploy_model_to_geap(
+        project_id="test-proj",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://test-proj-models/gemma-31b",
+        machine_type="g4-standard-48",
+        scale_to_zero=True,
+        idle_scaledown_period_seconds=1800,
+        dry_run=True,
+    )
+    manifest = result["manifest"]
+    assert manifest["min_replica_count"] == 0
+    assert manifest["scale_to_zero_spec"] == {"idle_scaledown_period_seconds": 1800}
+
+
+def test_deploy_model_scale_to_zero_uses_beta_api(monkeypatch):
+    from datetime import timedelta
+    from unittest.mock import MagicMock
+    from google.cloud import aiplatform, aiplatform_v1, aiplatform_v1beta1
+
+    fake_model = MagicMock()
+    fake_model.resource_name = "projects/123/locations/us-central1/models/456"
+    fake_endpoint = MagicMock()
+    fake_endpoint.resource_name = "projects/123/locations/us-central1/endpoints/789"
+    fake_endpoint.dedicated_endpoint_dns = None
+    fake_endpoint.gca_resource = None
+
+    mock_client = MagicMock()
+    mock_client.deploy_model.return_value.operation.name = "op/1"
+
+    captured = {}
+
+    def fake_deployed_model(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(aiplatform, "init", lambda **kwargs: None)
+    monkeypatch.setattr(aiplatform.Model, "upload", lambda **kwargs: fake_model)
+    monkeypatch.setattr(aiplatform.Endpoint, "create", lambda **kwargs: fake_endpoint)
+    monkeypatch.setattr(
+        aiplatform_v1beta1, "EndpointServiceClient", lambda client_options=None: mock_client
+    )
+    monkeypatch.setattr(aiplatform_v1beta1, "DeployedModel", fake_deployed_model)
+    monkeypatch.setattr(
+        aiplatform_v1,
+        "EndpointServiceClient",
+        lambda client_options=None: (_ for _ in ()).throw(AssertionError("v1 used")),
+    )
+
+    deploy_model_to_geap(
+        project_id="test-proj",
+        location="us-central1",
+        model_display_name="gemma-31b",
+        model_uri="gs://b/m",
+        machine_type="g4-standard-48",
+        scale_to_zero=True,
+        min_scaleup_period_seconds=300,
+        idle_scaledown_period_seconds=1800,
+    )
+
+    resources = captured["dedicated_resources"]
+    assert resources["min_replica_count"] == 0
+    assert resources["max_replica_count"] == 1
+    assert resources["scale_to_zero_spec"] == {
+        "min_scaleup_period": timedelta(seconds=300),
+        "idle_scaledown_period": timedelta(seconds=1800),
+    }
+
+
+def test_deployment_config_scale_to_zero_from_dict():
+    cfg = DeploymentConfig.from_dict(
+        {"scale_to_zero": True, "idle_scaledown_period_seconds": 600}
+    )
+    assert cfg.scale_to_zero is True
+    assert cfg.idle_scaledown_period_seconds == 600
+    assert cfg.min_scaleup_period_seconds is None
