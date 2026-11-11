@@ -24,10 +24,18 @@ from rich.table import Table
 
 from google.models.cli import __version__
 from google.models.cli._click import LazyGroup, patch_source_in_help
-from google.models.cli._gcp_project import get_active_gcp_account, resolve_gcp_project
+from google.models.cli._gcp_project import (
+    check_gke_recommender_api_enabled,
+    get_active_gcp_account,
+    resolve_gcp_project,
+)
 from google.models.cli.common.auth import is_authenticated
 from google.models.cli.common.banner import display_banner
-from google.models.cli.common.constants import DEFAULT_MODEL_REPO, DEFAULT_REGION
+from google.models.cli.common.constants import (
+    DEFAULT_MODEL_REPO,
+    DEFAULT_REGION,
+    GKE_RECOMMENDER_SERVICE,
+)
 
 # Force utf-8 encoding and non-exception fallback for printing
 if isinstance(sys.stdout, io.TextIOWrapper):
@@ -126,7 +134,8 @@ def info() -> None:
     """Displays current environment diagnostics and active GCP configuration."""
     from google.models.cli.common.config import settings
 
-    project_id = resolve_gcp_project() or "(not set)"
+    raw_project_id = resolve_gcp_project()
+    project_id = raw_project_id or "(not set)"
     account = get_active_gcp_account() or "(not set)"
 
     table = Table(
@@ -147,6 +156,21 @@ def info() -> None:
         if authed
         else "[bold yellow]❌ Not authenticated (run 'gcloud auth application-default login')[/bold yellow]",
     )
+    if not authed:
+        gke_api_display = "[dim]Cannot check (not authenticated)[/dim]"
+    elif not raw_project_id:
+        gke_api_display = "[dim]Cannot check (GCP project not set)[/dim]"
+    else:
+        api_enabled, api_detail = check_gke_recommender_api_enabled(raw_project_id)
+        if api_enabled is True:
+            gke_api_display = f"[green]✓ {api_detail}[/green]"
+        elif api_enabled is False:
+            gke_api_display = (
+                f"[bold yellow]❌ Not enabled (run 'gcloud services enable {GKE_RECOMMENDER_SERVICE} --project={raw_project_id}')[/bold yellow]"
+            )
+        else:
+            gke_api_display = f"[yellow]⚠️ {api_detail}[/yellow]"
+    table.add_row("GKE Recommender API", gke_api_display)
     table.add_row(
         "Default Location/Region", settings.google_cloud_location or DEFAULT_REGION
     )
