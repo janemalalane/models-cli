@@ -29,6 +29,7 @@
    - [6.2 Configuration Hierarchy & Single-Source-of-Truth Design](#62-configuration-hierarchy--single-source-of-truth-design)
    - [6.3 Authentication & GCP Project Resolution](#63-authentication--gcp-project-resolution)
    - [6.4 Hardware Catalog & Container Runtime Architecture](#64-hardware-catalog--container-runtime-architecture)
+   - [6.5 Model Collection (`MODELS_SPECS`) & Similarity-Based Proxy Sizing](#65-model-collection-models_specs--similarity-based-proxy-sizing)
 7. [Notable Under-the-Hood Engineering Solutions](#7-notable-under-the-hood-engineering-solutions)
 8. [Testing Architecture & Quality Assurance](#8-testing-architecture--quality-assurance)
 9. [Current Limitations & Implementation Caveats](#9-current-limitations--implementation-caveats)
@@ -157,6 +158,7 @@ You don't need a GPU—or massive 10 GB machine learning libraries—installed o
 models-cli/
 ├── pyproject.toml                         # Build config, dependencies, CLI entrypoints (`models-cli`, `models`)
 ├── uv.lock                                # Locked dependency graph for reproducible `uv` builds
+├── models_reference.csv                   # Curated reference table of 32 open-weights models & architectures
 ├── README.md                              # Quickstart user documentation
 ├── LICENSE                                # Apache 2.0 License
 ├── src/google/models/
@@ -172,7 +174,7 @@ models-cli/
 │       │   ├── banner.py                  # ASCII logo & tagline renderer
 │       │   ├── config.py                  # Pydantic `Settings`, `.env` upward loader, single-region validator
 │       │   ├── console.py                 # Rich stdout/stderr helpers (`print_error`, `create_table`, etc.)
-│       │   ├── constants.py               # Container URIs, defaults, enums, and `HARDWARE_SPECS` catalog (28 machines)
+│       │   ├── constants.py               # Container URIs, defaults, enums, `HARDWARE_SPECS` (28 SKUs) & `MODELS_SPECS` (32 models)
 │       │   └── errors.py                  # Domain exception hierarchy (`ModelsCliError` subclasses)
 │       ├── scaffold/
 │       │   ├── cmd_scaffold.py            # `create` (aliases: `init`, `scaffold`) interactive & flag-driven wizard
@@ -525,14 +527,77 @@ Cloud authentication errors are famously cryptic—sometimes showing up as bizar
 
 #### 🔬 Technical Deep Dive
 - **`HARDWARE_SPECS` Catalog (`constants.py`)**: Maps 28 Google Cloud GPU machine SKUs across 5 generations—**G2** (Nvidia L4, 24–192 GB VRAM), **G4** (Nvidia RTX PRO 6000 Blackwell, 48–384 GB VRAM), **A2** (Nvidia A100 40GB & 80GB, up to 16x GPUs / 640 GB), **A3** (Nvidia H100 80GB & H200 141GB, up to 1,128 GB VRAM), **A4** (Nvidia B200, 1,440 GB VRAM), and **A4X** (Nvidia GB200 Grace Blackwell, 768 GB VRAM)—providing `accelerator_type`, `accelerator_count`, `vram_gb`, `hourly_cost_usd`, and `memory_bandwidth_gb_s`. Furthermore, `deploy_utils.py` gracefully accepts *any* machine SKU outside `HARDWARE_SPECS` (such as TPU `ct6e-*` or CPU `c4-highmem-96`) without failing validation, future-proofing the CLI against newly released GCP machine types.
-- **`MODELS_SPECS` Catalog & Architecture Enums (`constants.py`)**: Maps 32 open-weights models across 7 origins (`ModelOrigin`: Google, Qwen, Meta, Mistral, DeepSeek AI, Moonshot AI, OpenAI), typed by architecture (`ModelArchitecture.DENSE` vs. `ModelArchitecture.MOE`), quantization (`ModelQuantization`: `NONE`, `FP8`, `GPTQ_4BIT`, `MXFP4`), total vs. active parameter counts (`total_parameters_b`, `active_parameters_b`), MoE routing topology (`total_experts`, `activated_experts`, `shared_experts`), GKE Recommender availability (`gke_recommender_supported`), and Hugging Face model card URLs.
 - **RAM-Backed `/dev/shm` Container Architecture**: Pre-built serving containers (`pytorch-vllm-serve` and `pytorch-sglang-serve`) are configured with `128 GB` of `/dev/shm` (`POSIX` shared memory backed by host RAM) and environment variables pointing `HF_HOME`, `TMPDIR`, `LOCAL_DOWNLOAD_DIR`, and `LOCAL_MODEL_DIR` to `/dev/shm`.
 
 #### 🧭 Pragmatic Engineer's View
-Three smart infrastructure choices stand out here:
+Two smart infrastructure choices stand out here:
 1. **Built-in Hardware Encyclopedia + Open Escape Hatch**: The tool knows the exact GPU chip type and count required by Google Cloud's API for 28 standard Nvidia machines (from budget \$0.70/hr L4s up to frontier 8x B200 Blackwell clusters), while still letting you type in brand-new TPU or CPU machine names without waiting for a CLI software update.
-2. **Built-in Open-Weights Model & MoE Reference (`MODELS_SPECS`)**: Tracks 32 open-weights models along with whether each model is **Dense** (uses 100% of its parameters on every word) or **Mixture-of-Experts / MoE** (stores massive total parameters in memory, e.g., 671B or 1T, while activating only a small fraction like 17B–37B per token), plus quantization and expert counts—critical metadata for memory sizing and TCO modeling.
-3. **Using RAM Disk (`/dev/shm`) for Fast Startup**: Model weights can be 60+ GB, and multi-GPU communication (NCCL) relies heavily on shared memory. By allocating 128 GB of high-speed RAM disk (`/dev/shm`) inside the container and routing downloads/caches there, containers boot faster, avoid "out of disk space" errors on small container boot disks, and avoid multi-GPU communication crashes.
+2. **Using RAM Disk (`/dev/shm`) for Fast Startup**: Model weights can be 60+ GB, and multi-GPU communication (NCCL) relies heavily on shared memory. By allocating 128 GB of high-speed RAM disk (`/dev/shm`) inside the container and routing downloads/caches there, containers boot faster, avoid "out of disk space" errors on small container boot disks, and avoid multi-GPU communication crashes.
+
+---
+
+### 6.5 Model Collection (`MODELS_SPECS`) & Similarity-Based Proxy Sizing
+*Source:* `models_reference.csv`, `src/google/models/cli/common/constants.py`, `src/google/models/cli/recommend/recommend_utils.py`, `src/google/models/cli/recommend/cmd_recommend.py`
+
+```mermaid
+flowchart TD
+    REQ["User runs: models-cli recommend --model M"] --> LOOKUP["lookup_model_spec(M)\nin MODELS_SPECS (32 models)"]
+    LOOKUP -->|Not in MODELS_SPECS| DIRECT["Query GKE Recommender directly\n(raises ModelNotSupportedError if unknown)"]
+    LOOKUP -->|gke_recommender_supported == True| SUPPORTED["Query GKE Recommender\nwith canonical repo ID"]
+    LOOKUP -->|gke_recommender_supported == False| SIM["find_most_similar_supported_model(M)"]
+
+    subgraph Hierarchy["4-Tier Similarity Hierarchy"]
+        SIM --> H1["1. Filter supported pool (23 models)\nby Architecture (DENSE vs MOE)"]
+        H1 --> H2["2. Score total_parameters_b\nin log2 scale (weight 1.0 Dense / 0.75 MoE)"]
+        H2 --> H3["3. If MOE: blend active_parameters_b\nin log2 scale (weight 0.25)"]
+        H3 --> SHORT["Build Shortlist of top 2–3 closest models\n(rejecting scale outliers > max(best + 0.85, 1.0))"]
+        SHORT --> H4{"4. Any shortlist model\nwith same ModelOrigin?"}
+        H4 -->|Yes| PICK_ORIGIN["Select closest same-origin\ncandidate in shortlist"]
+        H4 -->|No| PICK_TOP["Select #1 closest\ncandidate in shortlist"]
+    end
+
+    PICK_ORIGIN & PICK_TOP --> PROXY_QUERY["Query GKE Recommender using Proxy Model\n+ Display 'Similar Model Proxy' Notice Panel"]
+```
+
+#### 🔬 Technical Deep Dive
+1. **The GKE Recommender Coverage Limitation**:  
+   Google Cloud's `GkeInferenceQuickstartClient.fetch_profiles()` only returns profiles for a curated shortlist of models that Google has empirically benchmarked in its lab. Querying newly released or specialized open-weights variants (such as `Qwen/Qwen3.5-9B`, `Qwen/Qwen3.6-35B-A3B`, `google/gemma-4-26B-A4B-it`, or `Qwen/Qwen3-235B-A22B`) directly against the API fails with an unsupported-model error.
+2. **Curated Model Catalog & Type-Safe Enumerations (`constants.py` & `models_reference.csv`)**:  
+   `MODELS_SPECS` codifies 32 open-weights models (23 directly supported by GKE Recommender, 9 unsupported) synchronized 1-to-1 with `models_reference.csv` (enforced in CI via `test_models_specs_matches_models_reference_csv()` in `tests/test_config.py`). Categoricals are modeled as `(str, Enum)` classes matching `HARDWARE_SPECS`:
+   - **`ModelOrigin`**: `GOOGLE` (`"google"`), `QWEN` (`"qwen"`), `META` (`"meta"`), `MISTRAL` (`"mistral"`), `DEEPSEEK_AI` (`"deepseek-ai"`), `MOONSHOTAI` (`"moonshotai"`), `OPENAI` (`"openai"`).
+   - **`ModelArchitecture`**: `DENSE` (`"dense"`) vs. `MOE` (`"moe"`).
+   - **`ModelQuantization`**: `NONE` (`"none"`), `FP8` (`"fp8"`), `GPTQ_4BIT` (`"gptq-4bit"`), `MXFP4` (`"mxfp4"`).
+   - **Numeric & Routing Fields**: `total_parameters_b` (`1.0` to `1000.0`), `active_parameters_b`, `total_experts`, `activated_experts`, `shared_experts`, `gke_recommender_supported` (`bool`), `rank`, `timestamp` (ISO `YYYY-MM-DD`), and `model_card_url`.
+3. **4-Tier Similarity Matching (`find_most_similar_supported_model` in `recommend_utils.py`)**:  
+   When `lookup_model_spec(model_id)` (which resolves both `org/model` repo IDs and short `model_name` strings case-insensitively) finds `gke_recommender_supported == False`, it selects a benchmark proxy from the 23 supported models following a strict 4-level hierarchy:
+   - **Tier 1 — `architecture`**: Filters the `gke_recommender_supported == True` pool to candidates matching `target_spec["architecture"]` (`DENSE` vs. `MOE`), ensuring dense models never match sparse MoE topologies or vice versa.
+   - **Tier 2 & Tier 3 — `total_parameters_b` & (for `MOE`) `active_parameters_b`**: Computes scale-invariant $\log_2$ parameter distance:
+     $$d_{\text{total}} = \left|\log_2\!\left(\frac{P_{\text{total,cand}}}{P_{\text{total,target}}}\right)\right|, \qquad d_{\text{active}} = \left|\log_2\!\left(\frac{P_{\text{active,cand}}}{P_{\text{active,target}}}\right)\right|$$
+     $$d_{\text{param}} = \begin{cases} d_{\text{total}} & \text{if architecture} = \texttt{dense} \\ 0.75\,d_{\text{total}} + 0.25\,d_{\text{active}} & \text{if architecture} = \texttt{moe} \end{cases}$$
+     *Why weighted $\log_2$ blending instead of a naive `(d_total, d_active)` tuple?* Because every distinct MoE model in the catalog has a unique `total_parameters_b` (`21.0`, `46.7`, `79.0`, `109.0`, `117.0`, `141.0`, `397.0`, `400.0`, `671.0`, `1000.0`), a strict lexicographical tuple would never reach `d_active`. Weighting `total_parameters_b` at `0.75` and `active_parameters_b` at `0.25` keeps HBM/VRAM capacity primary while allowing per-token FLOPs (`active_parameters_b`) to meaningfully steer MoE similarity. Exact ties break by matching `quantization`, newer `timestamp`, and newer version name.
+   - **Shortlist & Outlier Guardrail**: Takes up to `shortlist_size = 3` top-ranked candidates subject to `d_param <= max(best_dist + 0.85, 1.0)`, guaranteeing a shortlist of 2–3 genuinely comparable models while preventing extreme scale outliers (e.g., a `500B` model when sizing a `10B` model) from entering the shortlist.
+   - **Tier 4 — Same `origin` Preference**: If one or more shortlist candidates share `target_spec["origin"]`, returns the highest-ranked same-origin candidate; otherwise returns `shortlist[0]`.
+   - **Transparency**: `get_recommendations()` annotates returned profiles with `proxy_model` and `requested_model`, and `cmd_recommend.py` surfaces both a Rich **Similar Model Proxy** warning panel and a top-level `"proxy_model"` field in `--format json`.
+
+| Unsupported Model (`gke_recommender_supported: False`) | Spec (`Arch`, `Total` / `Active`, `Origin`) | Selected Supported Proxy (`gke_recommender_supported: True`) | Resolution Rationale |
+| :--- | :--- | :--- | :--- |
+| `Qwen/Qwen3.5-9B` | `DENSE`, `9B`, `qwen` | `Qwen/Qwen3-8B-FP8` (`6.95B`, `qwen`) | Shortlist `[Llama-3-8B (8B), Qwen3-8B-FP8 (6.95B)]` → prefers `qwen` origin |
+| `Qwen/Qwen3.6-27B`, `3.8-27B`, `3.8-27B-FP8` | `DENSE`, `27B`, `qwen` | `google/gemma-3-27b-it` (`27B`, `google`) | Exact `27B` Dense match (`Qwen3-32B` falls outside top-3 shortlist) |
+| `google/gemma-4-26B-A4B-it` | `MOE`, `25.2B / 3.8B`, `google` | `openai/gpt-oss-20b` (`21B / 3.6B`, `openai`) | Tier 1 (`MOE`) overrides `google` origin (all supported Gemma models are Dense) |
+| `Qwen/Qwen3.6-35B-A3B`, `-FP8` | `MOE`, `35B / 3B`, `qwen` | `Qwen/Qwen3-Coder-Next` (`79B / 3B`, `qwen`) | Top-3 MoE shortlist includes `Qwen3-Coder-Next` (`qwen` origin + exact `3B` active) |
+| `Qwen/Qwen3.5-122B-A10B-GPTQ-Int4` | `MOE`, `122B / 10B`, `qwen` | `openai/gpt-oss-120b` (`117B / 5.1B`, `openai`) | Top-3 MoE shortlist (`117B`, `109B`, `141B`) has no `qwen` → picks `#1` instead of jumping to `397B` |
+| `Qwen/Qwen3-235B-A22B` | `MOE`, `234B / 22B`, `qwen` | `Qwen/Qwen3.5-397B-A17B` (`397B / 17B`, `qwen`) | Closest large MoE in shortlist + matching `qwen` origin |
+
+#### 🧭 Pragmatic Engineer's View
+Google Cloud's GKE Recommender is backed by real lab tests on real GPUs and TPUs—which makes its numbers trustworthy, but also means **its supported model list is relatively short and lags behind fast-moving open-source releases**. Without a fallback, asking for hardware recommendations on a brand-new model like `Qwen3.5-9B` or `gemma-4-26B-A4B-it` would simply hit a dead-end `"Model not supported"` error.
+
+Fortunately, from a hardware-sizing perspective, **GPUs don't care what a model is named—they care about its physical shape**:
+1. **Architecture first (`Dense` vs. `MoE`)**: A **Dense** model activates 100% of its brain on every word. A **Mixture-of-Experts (`MoE`)** model is like a hospital of specialists: all specialists must sit in the building (requiring huge GPU memory), but only a small team works on each word (making generation fast per word). Comparing a 30B Dense model to a 30B MoE model would give completely wrong speed estimates, so `models-cli` never mixes the two.
+2. **Total Parameters second (Does it fit in memory?)**: Total parameter count determines how many gigabytes of GPU/TPU memory (VRAM) are needed just to load the model without crashing.
+3. **Active Parameters third for MoE (How fast does it compute?)**: Among MoE models of similar total size, active parameters determine how much math happens per generated word (latency and throughput).
+4. **Same Creator (`Origin`) fourth—but *only* as a tie-breaker among 2–3 close twins**: Models from the same lab (e.g., Qwen or Meta) often share tokenizer sizes and attention tweaks. Looking at a shortlist of the 2–3 closest size matches lets `Qwen3.5-9B` (`9B`) smartly prefer `Qwen3-8B-FP8` (`6.95B`) over `Llama-3-8B` (`8B`), while preventing `Qwen3.5-122B` (`122B`) from foolishly jumping to a massive `397B` Qwen model when a `117B` MoE (`gpt-oss-120b`) is right next door.
+
+Whenever `recommend` uses a twin from `MODELS_SPECS`, it tells you upfront in a yellow info box so you know exactly which benchmarked model stood in as the proxy.
 
 ---
 
