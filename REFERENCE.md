@@ -231,13 +231,13 @@ Think of a generated workspace like a cleanly organized flight folder for one AI
 ## 5. Core Functionalities (Command-by-Command Reference)
 
 ### 5.1 `info` — Environment & Credential Diagnostics
-*Source:* `src/google/models/cli/main.py`
+*Source:* `src/google/models/cli/main.py`, `_gcp_project.py`
 
 #### 🔬 Technical Deep Dive
-Registered eagerly on `_MainGroup`. Invokes `resolve_gcp_project()`, `get_active_gcp_account()`, `is_authenticated()`, and loads the `Settings` singleton (`common/config.py`) to render a Rich `Table` displaying the CLI version, active `gcloud` / env account, resolved GCP project ID, ADC validity status, default region (`us-central1` fallback), active model ID (`google/gemma-4-31B-it` fallback), service account email, and GCS bucket. Unlike `--help`, it intentionally suppresses the ASCII banner to match `agents-cli` conventions.
+Registered eagerly on `_MainGroup`. Invokes `resolve_gcp_project()`, `get_active_gcp_account()`, `is_authenticated()`, `check_gke_recommender_api_enabled()`, and loads the `Settings` singleton (`common/config.py`) to render a Rich `Table` displaying the CLI version, active `gcloud` / env account, resolved GCP project ID, ADC validity status, **GKE Recommender API** (`gkerecommender.googleapis.com`) enablement status (with an exact `gcloud services enable` remediation command if disabled), default region (`us-central1` fallback), active model ID (`google/gemma-4-31B-it` fallback), service account email, and GCS bucket. Unlike `--help`, it intentionally suppresses the ASCII banner to match `agents-cli` conventions.
 
 #### 🧭 Pragmatic Engineer's View
-The "preflight sanity check." Before running cloud commands, `models-cli info` shows you in one glance which Google Cloud account and project you're logged into, whether your login token has expired, and what settings are currently active in your folder.
+The "preflight sanity check." Before running cloud commands, `models-cli info` shows you in one glance which Google Cloud account and project you're logged into, whether your login token has expired, whether the **GKE Recommender API** is switched on for your project, and what settings are currently active in your folder.
 
 ---
 
@@ -247,14 +247,15 @@ The "preflight sanity check." Before running cloud commands, `models-cli info` s
 
 #### 🔬 Technical Deep Dive
 - **Adaptive Interactivity**: Enters interactive wizard mode if `-i/--interactive` is passed, or if neither `--yes/-y` nor a `PROJECT_NAME` positional argument is provided. Crucially, `cmd_scaffold.py` inspects Click's `ctx.get_parameter_source(param) != ParameterSource.COMMANDLINE` so that any option explicitly supplied as a CLI flag is *not* re-prompted even in `-i` mode.
-- **Validation & Normalization**:
+- **Validation, Normalization & API Enablement**:
   - `normalize_project_name()` lowercases names, converts spaces/underscores to hyphens, collapses consecutive `--`, and rejects non-empty target directories.
   - Unless `-s/--skip-checks` is set, `verify_credentials_and_vertex()` checks ADC validity, runs `gcloud projects describe <project_id>` to distinguish `not found` vs. `permission denied`, and calls `aiplatform.init(project, location)`—emitting non-blocking warnings if offline so local scaffolding still succeeds.
+  - When GCP credentials and project access succeed, `create` calls `check_gke_recommender_api_enabled(resolved_project)`. If `gkerecommender.googleapis.com` is disabled (`False`), it prompts the user via `Confirm.ask(...)` (or auto-confirms under `--yes/-y/--auto-approve`) and calls `enable_gke_recommender_api(resolved_project)` so downstream `models-cli recommend` calls work out of the box.
   - Password masking (`Prompt.ask(..., password=True)`) hides `HF_TOKEN` input, while `tests/test_cli.py` and `test_scaffold.py` patch `getpass.getpass` for deterministic stdin testing.
 - **Template Rendering & 100% `.env` Alignment**: `copy_and_render_templates()` overlays `base_templates/_shared` followed by `base_templates/{vllm|sglang}`, performs `{key}` string interpolation on UTF-8 files (falling back to raw byte copy on binary files), and calls `generate_env_from_example()` to parse `.env.example` keys directly when writing `.env`.
 
 #### 🧭 Pragmatic Engineer's View
-`models-cli create` is the project setup wizard. You can either run it interactively (`models-cli create -i`), where it walks you through 4 numbered steps (workspace name, model & engine, GCP project & bucket, optional credentials), or run it in one automated line for scripts/CI (`models-cli create my-app -y`). If you pass some flags on the command line alongside `-i`, it is smart enough to only ask you about the pieces you left out. Even if your cloud credentials aren't ready yet, it warns you gently and still generates your project files locally.
+`models-cli create` is the project setup wizard. You can either run it interactively (`models-cli create -i`), where it walks you through 4 numbered steps (workspace name, model & engine, GCP project & bucket, optional credentials), or run it in one automated line for scripts/CI (`models-cli create my-app -y`). During Google Cloud verification, it also checks whether the **GKE Recommender API** is enabled on your project—and if not, asks your permission to turn it on right away so you don't hit an API block later during hardware sizing. Even if your cloud credentials aren't ready yet, it warns you gently and still generates your project files locally.
 
 ---
 
@@ -280,7 +281,13 @@ Before renting expensive GPUs, you want to compare candidate models (for instanc
 
 #### 🔬 Technical Deep Dive
 Queries Google Cloud's **GKE Inference Quickstart API** (`google.cloud.gkerecommender_v1.GkeInferenceQuickstartClient`) with `quota_project_id` (`x-goog-user-project`) automatically bound to the resolved GCP project:
-1. **Model Discovery (`--list-models`)**: Calls `FetchModelsRequest` to enumerate all Hugging Face repos benchmarked by Google's recommender backend, and raises `ModelNotSupportedError` (with suggestions) if an unsupported model is queried.
+1. **Model Discovery & Proxy Similarity Fallback (`--list-models` & `find_most_similar_supported_model`)**:
+   - Calls `FetchModelsRequest` to enumerate all Hugging Face repos benchmarked by Google's recommender backend, raising `ModelNotSupportedError` (with suggestions) if an unknown, unlisted model is queried.
+   - If the requested model exists in `MODELS_SPECS` with `gke_recommender_supported: False`, `find_most_similar_supported_model()` automatically selects the closest supported benchmark proxy using a 4-tier similarity hierarchy:
+     1. **`architecture`** (`dense` vs. `moe`)
+     2. **`total_parameters_b`** ($\log_2$ scale distance; weighted `0.75` for MoE)
+     3. **`active_parameters_b`** (when `architecture == moe`, weighted `0.25` in $\log_2$ scale)
+     4. **Same `origin` preference** within a shortlist of the top 2–3 genuinely similar models (annotating `proxy_model` in both JSON and Rich panel outputs).
 2. **Constraint Pushdown**: Converts `--target-cost-per-million-input-tokens`, `--target-cost-per-million-output-tokens` (decomposed into integer `units` and `nanos = round((val - units) * 1e9)` in `gke_rec.Amount`), `--output-input-cost-ratio`, `--pricing-model` (`on-demand`, `spot`, `1-year-cud`, `3-years-cud`), `--target-ttft-milliseconds`, and `--target-ntpot-milliseconds` into a `FetchProfilesRequest`.
 3. **Client-Side Filtering & Normalization**:
    - Classifies profiles as `TPU` (if `"tpu"` in `acceleratorType` or `instanceType` starts with `"ct"`, e.g., `ct6e-standard-4t`) or `GPU`, filtering by `--family` (`gpu`, `tpu`, `any`).
@@ -305,6 +312,9 @@ Choosing cloud AI hardware by guesswork is notoriously expensive: pick too small
 - **Fastest first-word response** (`--sort-by ttft` — Time to First Token)
 - **Fastest streaming reading speed** (`--sort-by ntpot` — Normalized Time per Output Token)
 - **Highest overall capacity** (`--sort-by throughput`)
+
+**What if your chosen open-weights model is brand-new and not yet benchmarked in Google's database?**  
+If the model is in `MODELS_SPECS` with `gke_recommender_supported = False` (for example, `Qwen/Qwen3.5-9B` or `google/gemma-4-26B-A4B-it`), `recommend` doesn't leave you stranded: it automatically finds the closest supported twin in `MODELS_SPECS`—matching Dense vs. MoE architecture first, then total parameter size (and active parameter size for MoE models), and preferring a model from the same creator among the top 2–3 closest matches—while displaying a clear banner showing which proxy model was used.
 
 **What if your app's prompt/response lengths don't match Google's standard presets (like "chatbot" or "summarization")?**  
 If you pass custom lengths—say `--input-tokens 4000 --output-tokens 500`—the tool uses a smart mathematical model (measuring proximity on a logarithmic scale, because doubling token lengths matters more than adding 10 tokens) to estimate your speed between known benchmarks, and recalculates your exact cost-per-million-tokens based on the machine's fixed hourly rental price. Finally, you just type `1` (or `2`, `3`, etc.) at the prompt, and it writes the chosen machine and multi-chip setting directly into your config files.
@@ -423,12 +433,56 @@ Chatting with a model one message at a time (`playground`) feels fast, but what 
 *Source:* `src/google/models/cli/main.py`, `_click.py`, `common/banner.py`, `common/console.py`, `common/errors.py`
 
 #### 🔬 Technical Deep Dive
-- **`LazyGroup` (`_click.py`)**: Subclasses `click.Group` to store `(import_path, short_help, hidden)` tuples in `_lazy_commands` while preserving registration order in `_command_order`. Running `models-cli --help` renders `short_help` strings directly without importing `google.cloud.aiplatform`, `openai`, or `yaml`. Only `get_command()` triggers `importlib.import_module()` for the specific subcommand invoked.
-- **Source-Path Epilog Patching (`patch_source_in_help`)**: Wraps `cmd.format_epilog` recursively so every command's `--help` prints `Source: /abs/path/to/cmd_*.py` at the bottom, aiding developer navigation.
-- **UTF-8 Hardening & Global Exception Boundary (`_MainGroup`)**: Reconfigures `sys.stdout` and `sys.stderr` with `encoding="utf-8", errors="replace"` (preventing `UnicodeEncodeError` when printing Unicode block-character banners or emojis on non-UTF-8 locales) and catches `KeyboardInterrupt` (exit code `130`), `ClickException`, and unhandled exceptions with version stamping.
+`LazyGroup` (in `_click.py`, subclassed by `_MainGroup` in `main.py`) extends `click.Group` to defer importing subcommand modules until the exact moment a specific subcommand is invoked. Click's standard `click.Group` stores already-imported `click.Command` instances in `self.commands`; `LazyGroup` intercepts Click's lifecycle by overriding four methods:
+
+1. **Registration without Importing (`add_lazy_command`)**:  
+   In `main.py`, subcommands are registered as plain string specifications rather than imported callables:
+   ```python
+   main.add_lazy_command(
+       "deploy",
+       "google.models.cli.deploy.cmd_deploy:deploy",
+       "Deploy open model container to Gemini Enterprise Online Prediction endpoint",
+   )
+   ```
+   `add_lazy_command()` stores `self._lazy_commands[name] = (import_path, short_help, hidden)` and appends `name` to `self._command_order: list[str]`. This preserves natural **workflow ordering** (`create` → `eval` → `recommend` → `deploy` → `playground` → `benchmark` → `info`) instead of Click's default alphabetical sorting, while supporting hidden command aliases (`init`, `scaffold`, `evaluate`) via `hidden=True`.
+2. **Unified Command Discovery (`list_commands`)**:  
+   Merges eager commands registered via `@main.command()` (such as `info` inside `main.py`) with lazy keys in `self._lazy_commands`, returning them in `self._command_order` sequence for help formatting and shell completion.
+3. **Zero-Import Help Rendering (`format_commands`) — The Key Optimization**:  
+   Standard `click.Group.format_commands()` iterates over `list_commands()` and calls `get_command(ctx, name)` on *every* command just to read its docstring for `--help`—which would eagerly import every module and defeat lazy loading. `LazyGroup.format_commands()` bypasses `get_command()` for unloaded commands: if `name` is not yet in `self.commands`, it reads `short_help` (`lazy[1]`) directly from `self._lazy_commands` (skipping entries where `hidden=True`) and writes the help rows with zero module imports.
+4. **Just-in-Time Dynamic Import (`get_command`)**:  
+   Invoked by Click *only* when the user targets `cmd_name` on the command line (e.g., `models-cli deploy --dry-run` or `models-cli deploy --help`):
+   ```python
+   if cmd_name in self._lazy_commands and cmd_name not in self.commands:
+       import_path, _, hidden = self._lazy_commands[cmd_name]
+       module_path, attr = import_path.split(":")
+       cmd = getattr(importlib.import_module(module_path), attr)
+       if hidden:
+           cmd.hidden = True
+       patch_source_in_help(cmd)
+       self.commands[cmd_name] = cmd
+   return super().get_command(ctx, cmd_name)
+   ```
+   It splits `"module.path:attr"`, imports only that single module via `importlib.import_module()`, resolves the command attribute, applies `patch_source_in_help(cmd)`, and caches the command in `self.commands[cmd_name]`.
+
+| User Runs | Methods Triggered on `LazyGroup` | Subcommand Modules Imported |
+| :--- | :--- | :--- |
+| `models-cli --help` | `format_commands()` → `list_commands()` | **0** (reads strings directly from `_lazy_commands`) |
+| `models-cli info` | `get_command("info")` | **0** (`info` is already defined in `main.py`) |
+| `models-cli deploy --help` | `get_command("deploy")` | **1** (`cmd_deploy.py` + its imports only) |
+| `models-cli scaffold my-app` | `get_command("scaffold")` | **1** (`cmd_scaffold.py` with `cmd.hidden = True`) |
+
+Additional CLI hardening in `_click.py` and `main.py`:
+- **Source-Path Epilog Patching (`patch_source_in_help`)**: Wraps `cmd.format_epilog` recursively using `inspect.getfile()` so every command's `--help` appends `Source: /abs/path/to/cmd_*.py` at the bottom.
+- **UTF-8 Hardening & Global Exception Boundary (`_MainGroup`)**: Reconfigures `sys.stdout` and `sys.stderr` with `encoding="utf-8", errors="replace"` (preventing `UnicodeEncodeError` when rendering Unicode block-character banners or emojis on non-UTF-8 locales) and catches `KeyboardInterrupt` (exit code `130`), `ClickException`, and unhandled exceptions with version stamping.
 
 #### 🧭 Pragmatic Engineer's View
-Nothing is more annoying than typing `my-tool --help` and waiting 3 seconds while Python loads giant cloud libraries it doesn't even need yet. `LazyGroup` ensures `models-cli` opens instantaneously by only loading the code for the exact command you ran. As a bonus for engineers debugging the tool, running `--help` on any command prints the exact file path on disk where that command's code lives.
+In a normal Python CLI, `main.py` has to load every subcommand at startup just to build its command menu. Here, `deploy` pulls in Google Cloud Vertex AI, Storage, and IAM libraries; `recommend` pulls in GKE Recommender; and `playground` pulls in the `openai` SDK. Loading all of those upfront means even typing `models-cli --help` or `models-cli --version` would stall for 1–3 seconds loading hundreds of files you aren't using—and a single broken optional library would crash the entire CLI.
+
+Think of `LazyGroup` like **printing a restaurant menu vs. cooking every dish before a customer sits down**:
+- **At startup**: `main.py` only registers lightweight "menu cards" made of plain text strings (the command's name, where its file lives, and a one-line description).
+- **When you run `models-cli --help`**: It prints those text strings straight off the menu card—zero cloud SDKs are loaded, so help appears instantaneously.
+- **When you run a specific command** (like `models-cli playground`): It looks up `"playground"` on the menu card, loads *only* the playground code on the spot, and leaves `deploy`, `recommend`, `eval`, and `benchmark` untouched on disk.
+- **Bonus for debugging**: Whenever a command is loaded, the CLI tacks its exact file path (`Source: .../cmd_*.py`) onto the bottom of `--help` so any engineer can jump straight to the right file.
 
 ---
 
@@ -459,6 +513,7 @@ Configuration is split cleanly into three buckets so settings don't contradict e
 - **Deep Auth Error Classification (`is_auth_error`)**: Walks the full `__cause__` / `__context__` exception chain to recognize not only `GoogleAuthError` and `401 Unauthenticated`, but also `503 ServiceUnavailable` GCE metadata plugin failures (`metadata.google.internal`, `"no service account scopes"`, `"getting metadata from plugin failed"`)—a notorious failure mode on corporate Linux workstations / Cloudtops when ADC credentials are missing or expired.
 - **Interactive Recovery (`ensure_authenticated`)**: If unauthenticated and `sys.stdin.isatty()` is true, prompts the user and spawns `gcloud auth application-default login` inline before resuming the command.
 - **Project Resolution Precedence (`resolve_gcp_project`)**: `--project` CLI flag -> `GOOGLE_CLOUD_PROJECT` env var -> `google.auth.default()` (which checks `GOOGLE_APPLICATION_CREDENTIALS`, ADC file, `gcloud config`, and GCE metadata).
+- **Service Enablement Inspection & Activation (`check_gke_recommender_api_enabled` / `enable_gke_recommender_api`)**: Uses a dual-transport strategy—querying/enabling `gkerecommender.googleapis.com` via `gcloud services list --enabled` / `gcloud services enable` first when `gcloud` is present, and falling back to the Google Cloud Service Usage v1 REST API (`serviceusage.googleapis.com`) via `AuthorizedSession` (ADC) with tri-state (`True` / `False` / `None`) status reporting.
 
 #### 🧭 Pragmatic Engineer's View
 Cloud authentication errors are famously cryptic—sometimes showing up as bizarre `"503 metadata.google.internal"` network timeouts on developer workstations rather than a clear `"Please log in"` message. `models-cli` recognizes all those disguised login failures, translates them into plain English, and—if you're sitting at an interactive terminal—simply asks: *"Would you like to log in now?"*, opens the login flow for you, and continues right where you left off.
@@ -470,12 +525,14 @@ Cloud authentication errors are famously cryptic—sometimes showing up as bizar
 
 #### 🔬 Technical Deep Dive
 - **`HARDWARE_SPECS` Catalog (`constants.py`)**: Maps 28 Google Cloud GPU machine SKUs across 5 generations—**G2** (Nvidia L4, 24–192 GB VRAM), **G4** (Nvidia RTX PRO 6000 Blackwell, 48–384 GB VRAM), **A2** (Nvidia A100 40GB & 80GB, up to 16x GPUs / 640 GB), **A3** (Nvidia H100 80GB & H200 141GB, up to 1,128 GB VRAM), **A4** (Nvidia B200, 1,440 GB VRAM), and **A4X** (Nvidia GB200 Grace Blackwell, 768 GB VRAM)—providing `accelerator_type`, `accelerator_count`, `vram_gb`, `hourly_cost_usd`, and `memory_bandwidth_gb_s`. Furthermore, `deploy_utils.py` gracefully accepts *any* machine SKU outside `HARDWARE_SPECS` (such as TPU `ct6e-*` or CPU `c4-highmem-96`) without failing validation, future-proofing the CLI against newly released GCP machine types.
+- **`MODELS_SPECS` Catalog & Architecture Enums (`constants.py`)**: Maps 32 open-weights models across 7 origins (`ModelOrigin`: Google, Qwen, Meta, Mistral, DeepSeek AI, Moonshot AI, OpenAI), typed by architecture (`ModelArchitecture.DENSE` vs. `ModelArchitecture.MOE`), quantization (`ModelQuantization`: `NONE`, `FP8`, `GPTQ_4BIT`, `MXFP4`), total vs. active parameter counts (`total_parameters_b`, `active_parameters_b`), MoE routing topology (`total_experts`, `activated_experts`, `shared_experts`), GKE Recommender availability (`gke_recommender_supported`), and Hugging Face model card URLs.
 - **RAM-Backed `/dev/shm` Container Architecture**: Pre-built serving containers (`pytorch-vllm-serve` and `pytorch-sglang-serve`) are configured with `128 GB` of `/dev/shm` (`POSIX` shared memory backed by host RAM) and environment variables pointing `HF_HOME`, `TMPDIR`, `LOCAL_DOWNLOAD_DIR`, and `LOCAL_MODEL_DIR` to `/dev/shm`.
 
 #### 🧭 Pragmatic Engineer's View
-Two smart infrastructure choices stand out here:
+Three smart infrastructure choices stand out here:
 1. **Built-in Hardware Encyclopedia + Open Escape Hatch**: The tool knows the exact GPU chip type and count required by Google Cloud's API for 28 standard Nvidia machines (from budget \$0.70/hr L4s up to frontier 8x B200 Blackwell clusters), while still letting you type in brand-new TPU or CPU machine names without waiting for a CLI software update.
-2. **Using RAM Disk (`/dev/shm`) for Fast Startup**: Model weights can be 60+ GB, and multi-GPU communication (NCCL) relies heavily on shared memory. By allocating 128 GB of high-speed RAM disk (`/dev/shm`) inside the container and routing downloads/caches there, containers boot faster, avoid "out of disk space" errors on small container boot disks, and avoid multi-GPU communication crashes.
+2. **Built-in Open-Weights Model & MoE Reference (`MODELS_SPECS`)**: Tracks 32 open-weights models along with whether each model is **Dense** (uses 100% of its parameters on every word) or **Mixture-of-Experts / MoE** (stores massive total parameters in memory, e.g., 671B or 1T, while activating only a small fraction like 17B–37B per token), plus quantization and expert counts—critical metadata for memory sizing and TCO modeling.
+3. **Using RAM Disk (`/dev/shm`) for Fast Startup**: Model weights can be 60+ GB, and multi-GPU communication (NCCL) relies heavily on shared memory. By allocating 128 GB of high-speed RAM disk (`/dev/shm`) inside the container and routing downloads/caches there, containers boot faster, avoid "out of disk space" errors on small container boot disks, and avoid multi-GPU communication crashes.
 
 ---
 
