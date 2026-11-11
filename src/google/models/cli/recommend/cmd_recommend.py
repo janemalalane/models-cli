@@ -30,13 +30,17 @@ from google.models.cli.common.config import settings
 from google.models.cli.common.constants import (
     DEFAULT_MODEL_REPO,
     DEFAULT_PRICING_MODEL,
+    MODELS_SPECS,
     AcceleratorFamily,
+    ModelArchitecture,
 )
 from google.models.cli.recommend.recommend_utils import (
     ModelNotSupportedError,
     apply_recommendation,
     fetch_supported_models,
+    find_most_similar_supported_model,
     get_recommendations,
+    lookup_model_spec,
 )
 
 
@@ -306,9 +310,19 @@ def recommend(
 
     is_custom_dist = input_tokens is not None and output_tokens is not None
 
+    matched_spec_entry = lookup_model_spec(target_model)
+    proxy_model: str | None = recs[0].get("proxy_model") if recs else None
+    if (
+        proxy_model is None
+        and matched_spec_entry is not None
+        and not matched_spec_entry[1].get("gke_recommender_supported", True)
+    ):
+        proxy_model = find_most_similar_supported_model(matched_spec_entry[0])
+
     if format_type.lower() == "json":
         output_payload = {
             "model": target_model,
+            "proxy_model": proxy_model,
             "source_api": "Google Cloud GKE Inference Quickstart API (GKE Recommender)",
             "sort_by": sort_by.lower(),
             "use_case": use_case,
@@ -335,6 +349,29 @@ def recommend(
     console.print(
         "   [dim]Powered by Google Cloud GKE Inference Quickstart API (GKE Recommender)[/dim]\n"
     )
+
+    if proxy_model and matched_spec_entry is not None:
+        t_spec = matched_spec_entry[1]
+        p_spec = MODELS_SPECS.get(proxy_model, {})
+        t_arch = str(getattr(t_spec.get("architecture"), "value", t_spec.get("architecture", ""))).upper()
+        p_arch = str(getattr(p_spec.get("architecture"), "value", p_spec.get("architecture", ""))).upper()
+        t_params = f"{t_spec.get('total_parameters_b')}B" + (
+            f" / {t_spec.get('active_parameters_b')}B active"
+            if t_spec.get("architecture") == ModelArchitecture.MOE
+            else ""
+        )
+        p_params = f"{p_spec.get('total_parameters_b')}B" + (
+            f" / {p_spec.get('active_parameters_b')}B active"
+            if p_spec.get("architecture") == ModelArchitecture.MOE
+            else ""
+        )
+        console.print(
+            Panel.fit(
+                f"[bold yellow]ℹ️  Similar Model Proxy:[/bold yellow] [bold cyan]{target_model}[/bold cyan] ({t_arch}, {t_params}) is not directly benchmarked in GKE Recommender.\n"
+                f"[dim]⚠️  Notice: Using closest supported model [bold green]{proxy_model}[/bold green] ({p_arch}, {p_params}) as benchmark proxy.[/dim]",
+                border_style="yellow",
+            )
+        )
 
     if is_custom_dist:
         ratio_val = _format_distribution_ratio(input_tokens, output_tokens)  # type: ignore
