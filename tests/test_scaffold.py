@@ -544,3 +544,122 @@ def test_interactive_create_skips_prompts_for_cli_provided_flags(tmp_path):
     assert 'HF_TOKEN="my-hf-token"' in env_content
     assert 'ENDPOINT_URL="https://my-endpoint.internal"' in env_content
 
+
+def test_create_prompts_and_enables_gke_recommender_api_when_confirmed(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.verify_credentials_and_vertex",
+        lambda proj, reg: (True, "Connected to Gemini Enterprise"),
+    )
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.check_gke_recommender_api_enabled",
+        lambda proj: (False, "Not enabled"),
+    )
+    enabled_projects = []
+
+    def fake_enable(proj):
+        enabled_projects.append(proj)
+        return True, f"Enabled GKE Recommender API (gkerecommender.googleapis.com) in '{proj}'."
+
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.enable_gke_recommender_api",
+        fake_enable,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "api-enable-yes-app",
+            "--project",
+            "my-gcp-proj",
+            "--bucket",
+            "my-bkt",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input="y\n",
+    )
+    assert result.exit_code == 0
+    assert "Would you like to enable the GKE Recommender API" in result.output
+    assert enabled_projects == ["my-gcp-proj"]
+    assert "Enabled GKE Recommender API" in result.output
+    assert (tmp_path / "api-enable-yes-app" / ".env").is_file()
+
+
+def test_create_skips_enabling_gke_recommender_api_when_declined(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.verify_credentials_and_vertex",
+        lambda proj, reg: (True, "Connected to Gemini Enterprise"),
+    )
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.check_gke_recommender_api_enabled",
+        lambda proj: (False, "Not enabled"),
+    )
+    enabled_projects = []
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.enable_gke_recommender_api",
+        lambda proj: enabled_projects.append(proj) or (True, "Enabled"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "api-enable-no-app",
+            "--project",
+            "my-gcp-proj",
+            "--bucket",
+            "my-bkt",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        input="n\n",
+    )
+    assert result.exit_code == 0
+    assert "Would you like to enable the GKE Recommender API" in result.output
+    assert enabled_projects == []
+    assert "Skipping GKE Recommender API enablement" in result.output
+    assert (tmp_path / "api-enable-no-app" / ".env").is_file()
+
+
+def test_create_does_not_prompt_when_gke_recommender_already_enabled(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.verify_credentials_and_vertex",
+        lambda proj, reg: (True, "Connected to Gemini Enterprise"),
+    )
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.check_gke_recommender_api_enabled",
+        lambda proj: (True, "Enabled (gkerecommender.googleapis.com)"),
+    )
+    enabled_projects = []
+    monkeypatch.setattr(
+        "google.models.cli.scaffold.cmd_scaffold.enable_gke_recommender_api",
+        lambda proj: enabled_projects.append(proj) or (True, "Enabled"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "api-already-enabled-app",
+            "--project",
+            "my-gcp-proj",
+            "--bucket",
+            "my-bkt",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Would you like to enable the GKE Recommender API" not in result.output
+    assert "GKE Recommender API enabled (gkerecommender.googleapis.com)" in result.output
+    assert enabled_projects == []
+    assert (tmp_path / "api-already-enabled-app" / ".env").is_file()
+
+
