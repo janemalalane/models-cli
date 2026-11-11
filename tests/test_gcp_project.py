@@ -73,3 +73,113 @@ def test_get_gcp_project_number_resourcemanager(monkeypatch):
     mock_client.get_project.assert_called_once_with(name="projects/my-project")
 
 
+def test_check_gke_recommender_api_enabled_empty_project():
+    from google.models.cli._gcp_project import check_gke_recommender_api_enabled
+
+    enabled, msg = check_gke_recommender_api_enabled("")
+    assert enabled is None
+    assert "not set" in msg
+
+
+def test_check_gke_recommender_api_enabled_gcloud_true(monkeypatch):
+    from unittest.mock import MagicMock
+    from google.models.cli._gcp_project import check_gke_recommender_api_enabled
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/gcloud")
+    mock_run = MagicMock(returncode=0, stdout="gkerecommender.googleapis.com\n")
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: mock_run)
+
+    enabled, msg = check_gke_recommender_api_enabled("my-project")
+    assert enabled is True
+    assert "gkerecommender.googleapis.com" in msg
+
+
+def test_check_gke_recommender_api_enabled_gcloud_false(monkeypatch):
+    from unittest.mock import MagicMock
+    from google.models.cli._gcp_project import check_gke_recommender_api_enabled
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/gcloud")
+    mock_run = MagicMock(returncode=0, stdout="")
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: mock_run)
+
+    enabled, msg = check_gke_recommender_api_enabled("my-project")
+    assert enabled is False
+    assert msg == "Not enabled"
+
+
+def test_check_gke_recommender_api_enabled_rest_fallback(monkeypatch):
+    from unittest.mock import MagicMock
+    import google.auth
+    import google.auth.transport.requests as ga_requests
+    from google.models.cli._gcp_project import check_gke_recommender_api_enabled
+
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    monkeypatch.setattr(google.auth, "default", lambda scopes=None: (MagicMock(), "my-project"))
+
+    mock_session = MagicMock()
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"state": "ENABLED"}
+    mock_session.get.return_value = mock_resp
+    monkeypatch.setattr(ga_requests, "AuthorizedSession", lambda creds: mock_session)
+
+    enabled, msg = check_gke_recommender_api_enabled("my-project")
+    assert enabled is True
+    assert "gkerecommender.googleapis.com" in msg
+
+
+def test_enable_gke_recommender_api_gcloud_success(monkeypatch):
+    from unittest.mock import MagicMock
+    from google.models.cli._gcp_project import enable_gke_recommender_api
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/gcloud")
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ok, msg = enable_gke_recommender_api("my-project")
+    assert ok is True
+    assert "gkerecommender.googleapis.com" in captured["cmd"]
+    assert "--project=my-project" in captured["cmd"]
+    assert "Enabled GKE Recommender API" in msg
+
+
+def test_enable_gke_recommender_api_rest_fallback_success(monkeypatch):
+    from unittest.mock import MagicMock
+    import google.auth
+    import google.auth.transport.requests as ga_requests
+    from google.models.cli._gcp_project import enable_gke_recommender_api
+
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    monkeypatch.setattr(google.auth, "default", lambda scopes=None: (MagicMock(), "my-project"))
+
+    mock_session = MagicMock()
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"name": "operations/noop.DONE_OPERATION", "done": True}
+    mock_session.post.return_value = mock_resp
+    monkeypatch.setattr(ga_requests, "AuthorizedSession", lambda creds: mock_session)
+
+    ok, msg = enable_gke_recommender_api("my-project")
+    assert ok is True
+    assert "Enabled GKE Recommender API" in msg
+
+
+def test_enable_gke_recommender_api_failure(monkeypatch):
+    from unittest.mock import MagicMock
+    import google.auth
+    from google.models.cli._gcp_project import enable_gke_recommender_api
+
+    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/gcloud")
+    mock_run = MagicMock(returncode=1, stdout="", stderr="PERMISSION_DENIED: Caller does not have permission")
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: mock_run)
+    monkeypatch.setattr(google.auth, "default", MagicMock(side_effect=Exception("No ADC")))
+
+    ok, msg = enable_gke_recommender_api("my-project")
+    assert ok is False
+    assert "PERMISSION_DENIED" in msg
+
+
+
