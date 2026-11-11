@@ -14,8 +14,11 @@
 
 """Recommendation utilities powered strictly by the Google Cloud GKE Recommender service."""
 
+from __future__ import annotations
+
+import math
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import google.api_core.exceptions
 import google.auth.exceptions
@@ -24,8 +27,13 @@ import yaml
 
 from google.models.cli.common.constants import (
     DEFAULT_PRICING_MODEL,
+    MODELS_SPECS,
     AcceleratorFamily,
+    ModelArchitecture,
 )
+
+if TYPE_CHECKING:
+    from google.cloud.gkerecommender_v1 import GkeInferenceQuickstartClient
 
 
 class ModelNotSupportedError(Exception):
@@ -39,7 +47,7 @@ class ModelNotSupportedError(Exception):
         self.supported_models = supported_models
 
 
-def _create_recommender_client() -> Any:
+def _create_recommender_client() -> GkeInferenceQuickstartClient:
     """Creates a GkeInferenceQuickstartClient with quota_project_id (x-goog-user-project) set."""
     import google.cloud.gkerecommender_v1 as gke_rec
 
@@ -57,7 +65,9 @@ def _create_recommender_client() -> Any:
     return gke_rec.GkeInferenceQuickstartClient()
 
 
-def fetch_supported_models(client: Any | None = None) -> list[str]:
+def fetch_supported_models(
+    client: GkeInferenceQuickstartClient | None = None,
+) -> list[str]:
     """Fetches the list of supported model repositories from GKE Recommender."""
     if client is None:
         client = _create_recommender_client()
@@ -247,6 +257,158 @@ def _match_use_case(profile_use_case: str, target_use_case: str | None) -> bool:
     return any(kw in profile_lower for kw in keywords)
 
 
+def lookup_model_spec(
+    model_id: str,
+    models_specs: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Looks up a model in MODELS_SPECS by full repo ID or short model_name."""
+    catalog = models_specs if models_specs is not None else MODELS_SPECS
+    cleaned = model_id.strip()
+    if not cleaned:
+        return None
+
+    if cleaned in catalog:
+        return cleaned, catalog[cleaned]
+
+    lowered = cleaned.lower()
+    for repo_id, spec in catalog.items():
+        if repo_id.lower() == lowered:
+            return repo_id, spec
+
+    for repo_id, spec in catalog.items():
+        if str(spec.get("model_name", "")).lower() == lowered:
+            return repo_id, spec
+
+    return None
+
+
+def find_most_similar_supported_model(
+    model_id: str,
+    models_specs: dict[str, dict[str, Any]] | None = None,
+    shortlist_size: int = 3,
+) -> str | None:
+    """Finds the most similar GKE Recommender-supported model in MODELS_SPECS.
+
+    Similarity hierarchy:
+    1. ``architecture`` (``dense`` vs ``moe``)
+    2. ``total_parameters_b``
+    3. If ``architecture`` is ``moe``, ``active_parameters_b``
+    4. Within a shortlist of 2 to 3 similar models, prefer the candidate from the same ``origin``
+
+    Args:
+        model_id: Target Hugging Face repository ID or model name.
+        models_specs: Optional catalog override (defaults to ``MODELS_SPECS``).
+        shortlist_size: Maximum size of the top similar models shortlist (default 3).
+
+    Returns:
+        Canonical repository ID of the most similar supported model, or ``None``
+        if ``model_id`` is not in ``models_specs`` or no supported candidates exist.
+    """
+    catalog = models_specs if models_specs is not None else MODELS_SPECS
+    found = lookup_model_spec(model_id, catalog)
+    if found is None:
+        return None
+
+    target_repo_id, target_spec = found
+    if target_spec.get("gke_recommender_supported", False):
+        return target_repo_id
+
+    supported_pool = [
+        (repo_id, spec)
+        for repo_id, spec in catalog.items()
+        if spec.get("gke_recommender_supported", False) and repo_id != target_repo_id
+    ]
+    if not supported_pool:
+        return None
+
+    # 1. Hierarchy Level 1: Match model architecture ('dense' vs 'moe')
+    target_arch = target_spec.get("architecture")
+    arch_matched = [
+        (repo_id, spec)
+        for repo_id, spec in supported_pool
+        if spec.get("architecture") == target_arch
+    ]
+    candidates = arch_matched if arch_matched else supported_pool
+
+    target_total = max(float(target_spec.get("total_parameters_b") or 1.0), 1e-6)
+    target_active = max(
+        float(target_spec.get("active_parameters_b") or target_total), 1e-6
+    )
+    target_quant = target_spec.get("quantization")
+    target_origin = target_spec.get("origin")
+    is_moe = target_arch == ModelArchitecture.MOE
+
+    # 2 & 3. Hierarchy Levels 2 & 3: total_parameters_b (primary) and active_parameters_b (secondary for MoE)
+    scored: list[dict[str, Any]] = []
+    for repo_id, spec in candidates:
+        cand_total = max(float(spec.get("total_parameters_b") or 1.0), 1e-6)
+        total_dist = abs(math.log2(cand_total / target_total))
+
+        if is_moe:
+            cand_active = max(
+                float(spec.get("active_parameters_b") or cand_total), 1e-6
+            )
+            active_dist = abs(math.log2(cand_active / target_active))
+            # Weight total_parameters_b higher (0.75) than active_parameters_b (0.25)
+            param_dist = (0.75 * total_dist) + (0.25 * active_dist)
+        else:
+            param_dist = total_dist
+
+        quant_mismatch = 0 if spec.get("quantization") == target_quant else 1
+        scored.append(
+            {
+                "repo_id": repo_id,
+                "spec": spec,
+                "param_dist": param_dist,
+                "total_dist": total_dist,
+                "quant_mismatch": quant_mismatch,
+                "timestamp": str(spec.get("timestamp") or ""),
+            }
+        )
+
+    # Sort ascending by parameter distance, then matching quantization, newer timestamp, and repo name descending
+    scored.sort(
+        key=lambda item: (
+            round(item["param_dist"], 6),
+            round(item["total_dist"], 6),
+            item["quant_mismatch"],
+        )
+    )
+    # Break exact ties deterministically in favor of newer model versions (e.g. gemma-3 over gemma-2)
+    # using Python's stable sort in reverse first:
+    scored_desc = sorted(
+        scored,
+        key=lambda item: (item["timestamp"], item["repo_id"]),
+        reverse=True,
+    )
+    scored_desc.sort(
+        key=lambda item: (
+            round(item["param_dist"], 6),
+            round(item["total_dist"], 6),
+            item["quant_mismatch"],
+        )
+    )
+
+    # Build shortlist of 2 to 3 genuinely similar models (avoiding extreme scale outliers > ~2x away from best)
+    k = max(1, shortlist_size)
+    best_dist = scored_desc[0]["param_dist"]
+    max_allowed_dist = max(best_dist + 0.85, 1.0)
+    shortlist = [
+        item
+        for idx, item in enumerate(scored_desc[:k])
+        if idx == 0 or item["param_dist"] <= max_allowed_dist
+    ]
+
+    # 4. Hierarchy Level 4: Within the shortlist of 2-3 similar models, prefer the same 'origin'
+    same_origin = [
+        item for item in shortlist if item["spec"].get("origin") == target_origin
+    ]
+    if same_origin:
+        return str(same_origin[0]["repo_id"])
+
+    return str(shortlist[0]["repo_id"])
+
+
 def get_recommendations(
     model_id: str,
     *,
@@ -263,7 +425,7 @@ def get_recommendations(
     output_tokens: int | None = None,
     family: AcceleratorFamily = AcceleratorFamily.ANY,
     sort_by: str = "cost",
-    client: Any | None = None,
+    client: GkeInferenceQuickstartClient | None = None,
 ) -> list[dict[str, Any]]:
     """Retrieves and ranks genuine hardware configurations from GKE Recommender service.
 
@@ -293,7 +455,7 @@ def get_recommendations(
     import google.cloud.gkerecommender_v1 as gke_rec
 
     # 1. Build target Cost
-    cost_kwargs = {}
+    cost_kwargs: dict[str, Any] = {}
     if target_cost_per_million_input_tokens is not None:
         in_units = int(target_cost_per_million_input_tokens)
         in_nanos = int(
@@ -321,7 +483,7 @@ def get_recommendations(
     cost_obj = gke_rec.Cost(**cost_kwargs) if cost_kwargs else None
 
     # 2. Build PerformanceRequirements
-    perf_kwargs = {}
+    perf_kwargs: dict[str, Any] = {}
     if cost_obj:
         perf_kwargs["target_cost"] = cost_obj
     if target_ttft_milliseconds is not None:
@@ -331,8 +493,22 @@ def get_recommendations(
 
     perf_req = gke_rec.PerformanceRequirements(**perf_kwargs) if perf_kwargs else None
 
+    # Resolve proxy model when chosen model has gke_recommender_supported=False in MODELS_SPECS
+    effective_model_id = model_id
+    proxy_model_id: str | None = None
+    spec_entry = lookup_model_spec(model_id)
+    if spec_entry is not None:
+        canonical_repo_id, model_spec = spec_entry
+        if not model_spec.get("gke_recommender_supported", True):
+            similar_model = find_most_similar_supported_model(canonical_repo_id)
+            if similar_model:
+                effective_model_id = similar_model
+                proxy_model_id = similar_model
+        else:
+            effective_model_id = canonical_repo_id
+
     # 3. Build FetchProfilesRequest
-    req_kwargs: dict[str, Any] = {"model": model_id}
+    req_kwargs: dict[str, Any] = {"model": effective_model_id}
     if model_server:
         req_kwargs["model_server"] = model_server
     if model_server_version:
@@ -344,7 +520,7 @@ def get_recommendations(
 
     try:
         profiles_pager = client.fetch_profiles(request=request)
-        raw_profiles = list(profiles_pager)
+        raw_profiles: list[Any] = list(profiles_pager)
     except (
         google.auth.exceptions.GoogleAuthError,
         google.api_core.exceptions.Unauthenticated,
@@ -360,8 +536,8 @@ def get_recommendations(
             supported = fetch_supported_models(client)
         except Exception:
             supported = []
-        if supported and model_id not in supported:
-            raise ModelNotSupportedError(model_id, supported) from exc
+        if supported and effective_model_id not in supported:
+            raise ModelNotSupportedError(effective_model_id, supported) from exc
         raise
 
     if not raw_profiles:
@@ -370,18 +546,18 @@ def get_recommendations(
             supported = fetch_supported_models(client)
         except Exception:
             supported = []
-        if supported and model_id not in supported:
-            raise ModelNotSupportedError(model_id, supported)
+        if supported and effective_model_id not in supported:
+            raise ModelNotSupportedError(effective_model_id, supported)
         return []
 
     candidates: list[dict[str, Any]] = []
 
     for p in raw_profiles:
-        d = (
-            MessageToDict(p._pb)
-            if hasattr(p, "_pb")
-            else (p if isinstance(p, dict) else MessageToDict(p))
-        )
+        if isinstance(p, dict):
+            d: dict[str, Any] = p
+        else:
+            pb_msg: Any = getattr(p, "_pb", p)
+            d = MessageToDict(pb_msg)
 
         accelerator_type = d.get("acceleratorType", "")
         instance_type = d.get("instanceType", "")
@@ -479,6 +655,9 @@ def get_recommendations(
                 "tensor_parallel_size": accelerator_count,
             },
         }
+        if proxy_model_id:
+            candidate["proxy_model"] = proxy_model_id
+            candidate["requested_model"] = model_id
         candidates.append(candidate)
 
     # If custom token distribution is requested, interpolate performance metrics
