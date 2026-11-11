@@ -19,15 +19,21 @@ from pathlib import Path
 import click
 from click.core import ParameterSource
 from rich.console import Console
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 
-from google.models.cli._gcp_project import get_active_gcp_account, resolve_gcp_project
+from google.models.cli._gcp_project import (
+    check_gke_recommender_api_enabled,
+    enable_gke_recommender_api,
+    get_active_gcp_account,
+    resolve_gcp_project,
+)
 from google.models.cli.common.auth import is_authenticated
 from google.models.cli.common.banner import display_banner
 from google.models.cli.common.constants import (
     DEFAULT_ENGINE,
     DEFAULT_MODEL_REPO,
     DEFAULT_REGION,
+    GKE_RECOMMENDER_SERVICE,
 )
 from google.models.cli.scaffold.scaffold_utils import (
     copy_and_render_templates,
@@ -328,6 +334,56 @@ def create_project(
                 console.print(f"  [green]>[/] {msg}")
             else:
                 console.print(f"[dim]✓ {msg}[/dim]")
+
+            api_enabled, api_detail = check_gke_recommender_api_enabled(
+                resolved_project
+            )
+            if api_enabled is True:
+                if is_interactive and not auto_approve:
+                    console.print(
+                        f"  [green]>[/] GKE Recommender API enabled ({GKE_RECOMMENDER_SERVICE})"
+                    )
+                else:
+                    console.print(
+                        f"[dim]✓ GKE Recommender API enabled ({GKE_RECOMMENDER_SERVICE})[/dim]"
+                    )
+            elif api_enabled is False:
+                console.print(
+                    f"  [yellow]![/] GKE Recommender API ([cyan]{GKE_RECOMMENDER_SERVICE}[/cyan]) is not enabled in project '[cyan]{resolved_project}[/cyan]'."
+                )
+                if auto_approve:
+                    should_enable = True
+                else:
+                    try:
+                        should_enable = Confirm.ask(
+                            f"  Would you like to enable the GKE Recommender API ({GKE_RECOMMENDER_SERVICE}) in '{resolved_project}'?",
+                            default=True,
+                        )
+                    except EOFError:
+                        should_enable = False
+
+                if should_enable:
+                    console.print(
+                        f"  [dim]Enabling {GKE_RECOMMENDER_SERVICE} in '{resolved_project}'...[/dim]"
+                    )
+                    enabled_ok, enable_msg = enable_gke_recommender_api(
+                        resolved_project
+                    )
+                    if enabled_ok:
+                        console.print(f"  [green]✓[/green] {enable_msg}")
+                    else:
+                        console.print(
+                            f"  [bold yellow]⚠️  Failed to enable GKE Recommender API:[/bold yellow] {enable_msg}\n"
+                            f"  [dim]You can enable it manually later with: gcloud services enable {GKE_RECOMMENDER_SERVICE} --project={resolved_project}[/dim]"
+                        )
+                else:
+                    console.print(
+                        f"  [dim]Skipping GKE Recommender API enablement. Enable it later with: gcloud services enable {GKE_RECOMMENDER_SERVICE} --project={resolved_project}[/dim]"
+                    )
+            else:
+                console.print(
+                    f"  [yellow]![/] Could not verify GKE Recommender API status: {api_detail}"
+                )
         else:
             console.print(
                 f"[bold yellow]⚠️  GCP verification warning:[/bold yellow] {msg}\n"
