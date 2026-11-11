@@ -219,3 +219,197 @@ def get_gcp_project_number(project_id: str) -> str | None:
         pass
 
     return None
+
+
+def _format_api_check_error(project_id: str, raw_error: str) -> str:
+    """Formats a concise human-readable reason when API status check fails."""
+    lowered = raw_error.lower()
+    if "not found" in lowered:
+        return f"GCP project '{project_id}' not found"
+    if "permission" in lowered or "denied" in lowered or "403" in lowered:
+        return f"Permission denied checking API status for '{project_id}'"
+    return "Unable to verify API status"
+
+
+def check_gke_recommender_api_enabled(project_id: str) -> tuple[bool | None, str]:
+    """Checks whether the GKE Recommender API (gkerecommender.googleapis.com) is enabled.
+
+    Args:
+        project_id: Target GCP project ID.
+
+    Returns:
+        Tuple of (enabled, detail_message) where ``enabled`` is:
+        - ``True`` if confirmed enabled,
+        - ``False`` if confirmed disabled,
+        - ``None`` if status could not be determined (e.g. unauthenticated, missing permissions, or project not found).
+    """
+    from google.models.cli.common.constants import GKE_RECOMMENDER_SERVICE
+
+    if not project_id:
+        return None, "GCP project not set"
+
+    gcloud_err = ""
+    if shutil.which("gcloud"):
+        try:
+            res = subprocess.run(
+                [
+                    "gcloud",
+                    "services",
+                    "list",
+                    "--enabled",
+                    f"--project={project_id}",
+                    f"--filter=config.name:{GKE_RECOMMENDER_SERVICE}",
+                    "--format=value(config.name)",
+                    "--quiet",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if res.returncode == 0:
+                enabled_services = [
+                    line.strip()
+                    for line in res.stdout.splitlines()
+                    if line.strip()
+                ]
+                if GKE_RECOMMENDER_SERVICE in enabled_services:
+                    return True, f"Enabled ({GKE_RECOMMENDER_SERVICE})"
+                return False, "Not enabled"
+            gcloud_err = res.stderr.strip()
+        except Exception as exc:
+            gcloud_err = str(exc)
+
+    # Fallback to Service Usage v1 REST API via Application Default Credentials
+    try:
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        session = AuthorizedSession(credentials)
+        url = (
+            f"https://serviceusage.googleapis.com/v1/projects/{project_id}"
+            f"/services/{GKE_RECOMMENDER_SERVICE}"
+        )
+        resp = session.get(
+            url,
+            headers={"x-goog-user-project": project_id},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            state = resp.json().get("state", "")
+            if state == "ENABLED":
+                return True, f"Enabled ({GKE_RECOMMENDER_SERVICE})"
+            return False, "Not enabled"
+        if resp.status_code == 404:
+            return None, f"GCP project '{project_id}' not found"
+        if resp.status_code == 403:
+            return None, f"Permission denied checking API status for '{project_id}'"
+    except Exception as exc:
+        if not gcloud_err:
+            gcloud_err = str(exc)
+
+    return None, _format_api_check_error(project_id, gcloud_err)
+
+
+def enable_gke_recommender_api(project_id: str) -> tuple[bool, str]:
+    """Enables the GKE Recommender API (gkerecommender.googleapis.com) in the given project.
+
+    Args:
+        project_id: Target GCP project ID.
+
+    Returns:
+        Tuple of (success, message).
+    """
+    from google.models.cli.common.constants import GKE_RECOMMENDER_SERVICE
+
+    if not project_id:
+        return False, "GCP project ID is required."
+
+    gcloud_err = ""
+    if shutil.which("gcloud"):
+        try:
+            res = subprocess.run(
+                [
+                    "gcloud",
+                    "services",
+                    "enable",
+                    GKE_RECOMMENDER_SERVICE,
+                    f"--project={project_id}",
+                    "--quiet",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            if res.returncode == 0:
+                return (
+                    True,
+                    f"Enabled GKE Recommender API ({GKE_RECOMMENDER_SERVICE}) in '{project_id}'.",
+                )
+            gcloud_err = res.stderr.strip()
+        except Exception as exc:
+            gcloud_err = str(exc)
+
+    # Fallback to Service Usage v1 REST API via Application Default Credentials
+    try:
+        import time
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        session = AuthorizedSession(credentials)
+        url = (
+            f"https://serviceusage.googleapis.com/v1/projects/{project_id}"
+            f"/services/{GKE_RECOMMENDER_SERVICE}:enable"
+        )
+        resp = session.post(
+            url,
+            headers={"x-goog-user-project": project_id},
+            json={},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            op = resp.json()
+            op_name = op.get("name")
+            done = op.get("done", False)
+            if (
+                op_name
+                and not done
+                and "DONE_OPERATION" not in str(op_name)
+            ):
+                op_url = f"https://serviceusage.googleapis.com/v1/{op_name}"
+                for _ in range(15):
+                    time.sleep(2)
+                    op_resp = session.get(
+                        op_url,
+                        headers={"x-goog-user-project": project_id},
+                        timeout=10,
+                    )
+                    if op_resp.status_code == 200:
+                        op_data = op_resp.json()
+                        if op_data.get("done"):
+                            if "error" in op_data:
+                                err_msg = op_data["error"].get(
+                                    "message", "Operation failed"
+                                )
+                                return False, err_msg
+                            break
+            return (
+                True,
+                f"Enabled GKE Recommender API ({GKE_RECOMMENDER_SERVICE}) in '{project_id}'.",
+            )
+        err_body = resp.text.strip()
+        if not gcloud_err and err_body:
+            gcloud_err = err_body.splitlines()[0]
+    except Exception as exc:
+        if not gcloud_err:
+            gcloud_err = str(exc)
+
+    first_line = gcloud_err.splitlines()[0] if gcloud_err else f"Failed to enable {GKE_RECOMMENDER_SERVICE}."
+    return False, first_line
