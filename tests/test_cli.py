@@ -50,8 +50,46 @@ def test_cli_info():
     result = runner.invoke(app, ["info"])
     assert result.exit_code == 0
     assert "models-cli Environment Information" in result.stdout
+    assert "GKE Recommender API" in result.stdout
     # Banner should NOT be in info command (matching agents-cli)
     assert "█▀▄▀█" not in result.stdout
+
+
+def test_cli_info_gke_recommender_enabled(monkeypatch):
+    monkeypatch.setattr(
+        "google.models.cli.main.resolve_gcp_project", lambda: "my-gcp-proj"
+    )
+    monkeypatch.setattr(
+        "google.models.cli.main.is_authenticated",
+        lambda: (True, "user@google.com"),
+    )
+    monkeypatch.setattr(
+        "google.models.cli.main.check_gke_recommender_api_enabled",
+        lambda proj: (True, "Enabled (gkerecommender.googleapis.com)"),
+    )
+    result = runner.invoke(app, ["info"])
+    assert result.exit_code == 0
+    assert "GKE Recommender API" in result.stdout
+    assert "Enabled (gkerecommender.googleapis.com)" in result.stdout
+
+
+def test_cli_info_gke_recommender_disabled(monkeypatch):
+    monkeypatch.setattr(
+        "google.models.cli.main.resolve_gcp_project", lambda: "my-gcp-proj"
+    )
+    monkeypatch.setattr(
+        "google.models.cli.main.is_authenticated",
+        lambda: (True, "user@google.com"),
+    )
+    monkeypatch.setattr(
+        "google.models.cli.main.check_gke_recommender_api_enabled",
+        lambda proj: (False, "Not enabled"),
+    )
+    result = runner.invoke(app, ["info"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0
+    assert "GKE Recommender API" in result.stdout
+    assert "Not enabled" in result.stdout
+    assert "gcloud services enable gkerecommender.googleapis.com --project=my-gcp-proj" in result.stdout
 
 
 def test_banner_rendering():
