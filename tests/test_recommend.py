@@ -562,3 +562,219 @@ def test_create_recommender_client_without_project(monkeypatch, tmp_path):
     _create_recommender_client()
 
     mock_cls.assert_called_once_with()
+
+
+def test_find_most_similar_supported_model_dense_prefers_same_origin_in_shortlist():
+    from google.models.cli.recommend.recommend_utils import (
+        find_most_similar_supported_model,
+    )
+
+    # Qwen3.5-9B (9B Dense, Qwen) has Llama-3-8B (8B, Meta) and Qwen3-8B-FP8 (6.95B, Qwen)
+    # in its shortlist of similar Dense models -> prefers Qwen3-8B-FP8 from the same origin.
+    assert find_most_similar_supported_model("Qwen/Qwen3.5-9B") == "Qwen/Qwen3-8B-FP8"
+    # Also resolves short model name without org prefix
+    assert find_most_similar_supported_model("Qwen3.5-9B") == "Qwen/Qwen3-8B-FP8"
+
+
+def test_find_most_similar_supported_model_moe_hierarchy():
+    from google.models.cli.recommend.recommend_utils import (
+        find_most_similar_supported_model,
+    )
+
+    # 1. Architecture dominates origin: gemma-4-26B-A4B-it (25.2B / 3.8B MoE, Google)
+    # matches gpt-oss-20b (21B / 3.6B MoE) rather than a Dense Google Gemma model.
+    assert (
+        find_most_similar_supported_model("google/gemma-4-26B-A4B-it")
+        == "openai/gpt-oss-20b"
+    )
+
+    # 2. Parameter closeness forms the top-3 shortlist before origin preference:
+    # Qwen3.5-122B-A10B-GPTQ-Int4 (122B / 10B MoE, Qwen) has top-3 shortlist
+    # [gpt-oss-120b (117B), Llama-4-Scout (109B), Mixtral-8x22B (141B)] -> picks #1 gpt-oss-120b.
+    assert (
+        find_most_similar_supported_model("Qwen/Qwen3.5-122B-A10B-GPTQ-Int4")
+        == "openai/gpt-oss-120b"
+    )
+
+    # 3. Large MoE with same-origin candidate in shortlist:
+    assert (
+        find_most_similar_supported_model("Qwen/Qwen3-235B-A22B")
+        == "Qwen/Qwen3.5-397B-A17B"
+    )
+
+    # 4. Small/medium MoE with same-origin A3B candidate in top-3 shortlist:
+    assert (
+        find_most_similar_supported_model("Qwen/Qwen3.6-35B-A3B")
+        == "Qwen/Qwen3-Coder-Next"
+    )
+
+
+def test_find_most_similar_supported_model_active_params_for_moe():
+    from google.models.cli.common.constants import (
+        ModelArchitecture,
+        ModelOrigin,
+        ModelQuantization,
+    )
+    from google.models.cli.recommend.recommend_utils import (
+        find_most_similar_supported_model,
+    )
+
+    custom_specs = {
+        "org-a/target-moe": {
+            "model_name": "target-moe",
+            "origin": ModelOrigin.GOOGLE,
+            "architecture": ModelArchitecture.MOE,
+            "total_parameters_b": 100.0,
+            "active_parameters_b": 8.0,
+            "quantization": ModelQuantization.NONE,
+            "gke_recommender_supported": False,
+        },
+        "org-b/moe-high-active": {
+            "model_name": "moe-high-active",
+            "origin": ModelOrigin.META,
+            "architecture": ModelArchitecture.MOE,
+            "total_parameters_b": 100.0,
+            "active_parameters_b": 32.0,
+            "quantization": ModelQuantization.NONE,
+            "gke_recommender_supported": True,
+        },
+        "org-c/moe-close-active": {
+            "model_name": "moe-close-active",
+            "origin": ModelOrigin.MISTRAL,
+            "architecture": ModelArchitecture.MOE,
+            "total_parameters_b": 102.0,
+            "active_parameters_b": 8.0,
+            "quantization": ModelQuantization.NONE,
+            "gke_recommender_supported": True,
+        },
+    }
+
+    assert (
+        find_most_similar_supported_model("org-a/target-moe", models_specs=custom_specs)
+        == "org-c/moe-close-active"
+    )
+
+
+def test_find_most_similar_supported_model_rejects_extreme_outlier_in_shortlist():
+    from google.models.cli.common.constants import (
+        ModelArchitecture,
+        ModelOrigin,
+        ModelQuantization,
+    )
+    from google.models.cli.recommend.recommend_utils import (
+        find_most_similar_supported_model,
+    )
+
+    custom_specs = {
+        "Qwen/target-10b": {
+            "model_name": "target-10b",
+            "origin": ModelOrigin.QWEN,
+            "architecture": ModelArchitecture.DENSE,
+            "total_parameters_b": 10.0,
+            "active_parameters_b": 10.0,
+            "quantization": ModelQuantization.NONE,
+            "gke_recommender_supported": False,
+        },
+        "meta-llama/exact-10b": {
+            "model_name": "exact-10b",
+            "origin": ModelOrigin.META,
+            "architecture": ModelArchitecture.DENSE,
+            "total_parameters_b": 10.0,
+            "active_parameters_b": 10.0,
+            "quantization": ModelQuantization.NONE,
+            "gke_recommender_supported": True,
+        },
+        "Qwen/huge-500b": {
+            "model_name": "huge-500b",
+            "origin": ModelOrigin.QWEN,
+            "architecture": ModelArchitecture.DENSE,
+            "total_parameters_b": 500.0,
+            "active_parameters_b": 500.0,
+            "quantization": ModelQuantization.NONE,
+            "gke_recommender_supported": True,
+        },
+    }
+
+    # 500B is 50x larger and should not be considered "similar" to 10B just for matching origin
+    assert (
+        find_most_similar_supported_model("Qwen/target-10b", models_specs=custom_specs)
+        == "meta-llama/exact-10b"
+    )
+
+
+def test_get_recommendations_uses_proxy_model_when_unsupported_in_catalog():
+    mock_client = MagicMock()
+    mock_client.fetch_profiles.return_value = [_make_mock_profile()]
+
+    recs = get_recommendations("Qwen/Qwen3.5-9B", client=mock_client)
+
+    mock_client.fetch_profiles.assert_called_once()
+    req = mock_client.fetch_profiles.call_args[1]["request"]
+    assert req.model == "Qwen/Qwen3-8B-FP8"
+    assert len(recs) == 1
+    assert recs[0]["proxy_model"] == "Qwen/Qwen3-8B-FP8"
+    assert recs[0]["requested_model"] == "Qwen/Qwen3.5-9B"
+
+
+def test_cli_recommend_displays_proxy_notice_and_json_field(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+    sample_rec = {
+        "machine_type": "g2-standard-12",
+        "accelerator_type": "nvidia-l4",
+        "accelerator_count": 1,
+        "chip_name": "nvidia-l4 (1x)",
+        "family": "gpu",
+        "input_cost_per_m": 0.019,
+        "output_cost_per_m": 0.078,
+        "output_input_cost_ratio": 4.0,
+        "pricing_model": "on-demand",
+        "ttft_ms": 120,
+        "ntpot_ms": 18,
+        "output_tokens_per_sec": 1059,
+        "model_server": "vllm",
+        "engine_params": {"tensor_parallel_size": 1},
+        "proxy_model": "Qwen/Qwen3-8B-FP8",
+        "requested_model": "Qwen/Qwen3.5-9B",
+    }
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.get_recommendations",
+        lambda **kwargs: [sample_rec],
+    )
+
+    table_res = runner.invoke(recommend_cmd, ["--model", "Qwen/Qwen3.5-9B"])
+    assert table_res.exit_code == 0
+    assert "Similar Model Proxy" in table_res.output
+    assert "Qwen/Qwen3-8B-FP8" in table_res.output
+
+    json_res = runner.invoke(
+        recommend_cmd, ["--model", "Qwen/Qwen3.5-9B", "--format", "json"]
+    )
+    assert json_res.exit_code == 0
+    assert '"proxy_model": "Qwen/Qwen3-8B-FP8"' in json_res.output
+
+
+def test_recommend_utils_preserves_lazy_gkerecommender_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; "
+        "import google.models.cli.main; "
+        "assert 'google.models.cli.recommend.recommend_utils' not in sys.modules; "
+        "assert 'google.cloud.gkerecommender_v1' not in sys.modules; "
+        "import google.models.cli.recommend.recommend_utils; "
+        "assert 'google.cloud.gkerecommender_v1' not in sys.modules"
+    )
+    res = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+
+
