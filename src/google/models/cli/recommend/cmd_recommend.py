@@ -16,6 +16,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 import google.api_core.exceptions
@@ -33,6 +34,7 @@ from google.models.cli.common.constants import (
     MODELS_SPECS,
     AcceleratorFamily,
     ModelArchitecture,
+    get_vllm_spec_params,
 )
 from google.models.cli.recommend.recommend_utils import (
     ModelNotSupportedError,
@@ -52,6 +54,46 @@ def _format_distribution_ratio(input_tokens: int, output_tokens: int) -> str:
     else:
         ratio_int = int(round(output_tokens / max(input_tokens, 1)))
         return f"1:{ratio_int}"
+
+
+def _resolve_vllm_engine_params(
+    target_model: str, candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge catalog-derived vLLM parameters with candidate engine_params."""
+    raw_params = dict(candidate.get("engine_params") or {})
+    server_name = str(candidate.get("model_server") or "vllm").lower()
+    if server_name != "vllm":
+        return raw_params
+
+    spec_params = get_vllm_spec_params(target_model)
+    merged = {**spec_params, **raw_params}
+    return merged
+
+
+def _build_vllm_cli_flags(target_model: str, candidate: dict[str, Any]) -> list[str]:
+    """Build displayable vLLM CLI flags for a recommendation candidate."""
+    server_name = str(candidate.get("model_server") or "vllm").lower()
+    if server_name != "vllm":
+        return []
+
+    merged = _resolve_vllm_engine_params(target_model, candidate)
+    served_name = merged.get("served_model_name") or target_model
+    flags = [f"--served-model-name={served_name}"]
+
+    tp_size = merged.get("tensor_parallel_size")
+    if tp_size is not None:
+        flags.append(f"--tensor-parallel-size={tp_size}")
+
+    if merged.get("reasoning_parser"):
+        flags.append(f"--reasoning-parser={merged['reasoning_parser']}")
+
+    if merged.get("enable_auto_tool_choice"):
+        flags.append("--enable-auto-tool-choice")
+
+    if merged.get("tool_call_parser"):
+        flags.append(f"--tool-call-parser={merged['tool_call_parser']}")
+
+    return flags
 
 
 console = Console()
@@ -319,10 +361,14 @@ def recommend(
     ):
         proxy_model = find_most_similar_supported_model(matched_spec_entry[0])
 
+    for rec_item in recs:
+        rec_item["engine_params"] = _resolve_vllm_engine_params(target_model, rec_item)
+
     if format_type.lower() == "json":
         output_payload = {
             "model": target_model,
             "proxy_model": proxy_model,
+            "vllm_args": _build_vllm_cli_flags(target_model, recs[0]) if recs else [],
             "source_api": "Google Cloud GKE Inference Quickstart API (GKE Recommender)",
             "sort_by": sort_by.lower(),
             "use_case": use_case,
@@ -499,6 +545,11 @@ def recommend(
     console.print(
         f"   [dim]Serving Engine: {top['model_server']} {top.get('model_server_version', '')} with Tensor Parallelism = {top['engine_params']['tensor_parallel_size']}[/dim]"
     )
+    vllm_flags = _build_vllm_cli_flags(target_model, top)
+    if vllm_flags:
+        console.print("   [dim]vLLM Parameters:[/dim]")
+        for flag in vllm_flags:
+            console.print(f"     [cyan]{flag}[/cyan]")
 
     # Check if inside a project directory with config/deployment_spec.yaml
     deploy_spec = Path("config/deployment_spec.yaml")
