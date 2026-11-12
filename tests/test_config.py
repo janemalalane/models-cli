@@ -113,6 +113,8 @@ def test_models_specs_catalog_and_enums():
         ModelArchitecture,
         ModelOrigin,
         ModelQuantization,
+        ReasoningParser,
+        ToolCallParser,
     )
 
     assert len(MODELS_SPECS) == 32
@@ -128,6 +130,8 @@ def test_models_specs_catalog_and_enums():
         "activated_experts",
         "shared_experts",
         "quantization",
+        "reasoning_parser",
+        "tool_call_parser",
         "gke_recommender_supported",
         "rank",
         "timestamp",
@@ -140,6 +144,12 @@ def test_models_specs_catalog_and_enums():
         assert isinstance(spec["origin"], ModelOrigin)
         assert isinstance(spec["architecture"], ModelArchitecture)
         assert isinstance(spec["quantization"], ModelQuantization)
+        assert spec["reasoning_parser"] is None or isinstance(
+            spec["reasoning_parser"], ReasoningParser
+        )
+        assert spec["tool_call_parser"] is None or isinstance(
+            spec["tool_call_parser"], ToolCallParser
+        )
         assert isinstance(spec["gke_recommender_supported"], bool)
         assert spec["total_parameters_b"] >= spec["active_parameters_b"] > 0
 
@@ -224,6 +234,11 @@ def test_models_specs_matches_models_reference_csv():
             "timestamp": iso_ts,
             "model_card_url": url,
         }
-        assert MODELS_SPECS[repo_id] == expected
+        actual = {
+            k: v
+            for k, v in MODELS_SPECS[repo_id].items()
+            if k not in ("reasoning_parser", "tool_call_parser")
+        }
+        assert actual == expected
 
 
