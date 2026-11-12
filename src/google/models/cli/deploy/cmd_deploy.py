@@ -34,6 +34,7 @@ from google.models.cli.deploy._operation import (
     write_operation,
 )
 from google.models.cli.deploy.deploy_utils import (
+    build_container_args,
     build_deployment_status_renderable,
     check_bucket_exists,
     check_model_exists_in_gcs,
@@ -288,6 +289,22 @@ def deploy(
         and "{project_name}" not in deployment_config.display_name
         else f"{model_display_name}-endpoint"
     )
+
+    resolved_container_args = build_container_args(
+        engine_config,
+        model_uri=model_uri,
+        served_model_name=model_repo,
+    )
+    cli_flags = [arg for arg in resolved_container_args if arg.startswith("--")]
+    if cli_flags:
+        engine_label = (
+            "vLLM"
+            if resolved_engine == InferenceEngine.VLLM
+            else resolved_engine.value
+        )
+        click.echo(f"⚙️  {engine_label} Parameters:")
+        for flag in cli_flags:
+            click.echo(f"   {flag}")
 
     result = deploy_model_to_geap(
         project_id=project_id,
