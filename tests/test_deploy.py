@@ -1376,6 +1376,149 @@ def test_deploy_custom_environment_variables():
     assert env_vars["VLLM_LOGGING_LEVEL"] == "INFO"
 
 
+def test_build_container_args_injects_parsers_from_models_specs():
+    """Verify vLLM auto-injects reasoning_parser, tool_call_parser, and enable_auto_tool_choice from MODELS_SPECS."""
+    from google.models.cli._project import VLLMEngineConfig
+
+    cfg = VLLMEngineConfig.from_dict({"engine": "vllm", "tensor_parallel_size": 1})
+
+    # 1. Qwen/Qwen3.5-9B -> --reasoning-parser=qwen3, --tool-call-parser=qwen3_coder, --enable-auto-tool-choice
+    qwen_args = build_container_args(
+        cfg,
+        model_uri="gs://my-bucket/Qwen3.5-9B",
+        served_model_name="Qwen/Qwen3.5-9B",
+    )
+    assert "--model=gs://my-bucket/Qwen3.5-9B" in qwen_args
+    assert "--served-model-name=Qwen/Qwen3.5-9B" in qwen_args
+    assert "--reasoning-parser=qwen3" in qwen_args
+    assert "--tool-call-parser=qwen3_coder" in qwen_args
+    assert "--enable-auto-tool-choice" in qwen_args
+
+    # 2. google/gemma-4-31B-it -> --reasoning-parser=gemma4, --tool-call-parser=gemma4, --enable-auto-tool-choice
+    gemma4_args = build_container_args(
+        cfg,
+        model_uri="gs://my-bucket/gemma-4-31B-it",
+        served_model_name="google/gemma-4-31B-it",
+    )
+    assert "--reasoning-parser=gemma4" in gemma4_args
+    assert "--tool-call-parser=gemma4" in gemma4_args
+    assert "--enable-auto-tool-choice" in gemma4_args
+
+    # 3. meta-llama/Llama-3.3-70B-Instruct -> tool_call_parser=llama3_json, no reasoning_parser
+    llama_args = build_container_args(
+        cfg,
+        model_uri="gs://my-bucket/Llama-3.3-70B-Instruct",
+        served_model_name="meta-llama/Llama-3.3-70B-Instruct",
+    )
+    assert not any(a.startswith("--reasoning-parser") for a in llama_args)
+    assert "--tool-call-parser=llama3_json" in llama_args
+    assert "--enable-auto-tool-choice" in llama_args
+
+    # 4. google/gemma-2-2b-it -> neither reasoning_parser nor tool_call_parser; omits --enable-auto-tool-choice
+    gemma2_args = build_container_args(
+        cfg,
+        model_uri="gs://my-bucket/gemma-2-2b-it",
+        served_model_name="google/gemma-2-2b-it",
+    )
+    assert not any(a.startswith("--reasoning-parser") for a in gemma2_args)
+    assert not any(a.startswith("--tool-call-parser") for a in gemma2_args)
+    assert "--enable-auto-tool-choice" not in gemma2_args
+
+
+def test_build_container_args_respects_yaml_parser_overrides():
+    """Verify explicit YAML settings override MODELS_SPECS parser defaults."""
+    from google.models.cli._project import VLLMEngineConfig
+
+    cfg = VLLMEngineConfig.from_dict(
+        {
+            "engine": "vllm",
+            "tensor_parallel_size": 1,
+            "tool_call_parser": "hermes",
+            "enable_auto_tool_choice": False,
+        }
+    )
+    args = build_container_args(
+        cfg,
+        model_uri="gs://my-bucket/Qwen3.5-9B",
+        served_model_name="Qwen/Qwen3.5-9B",
+    )
+    assert "--reasoning-parser=qwen3" in args
+    assert "--tool-call-parser=hermes" in args
+    assert "--enable-auto-tool-choice" not in args
+
+
+def test_deploy_command_surfaces_vllm_parameters_live_and_dry_run(monkeypatch):
+    """Verify both live deploy and deploy --dry-run surface vLLM parameters in stdout."""
+    import google.models.cli.deploy.cmd_deploy as cmd_deploy_mod
+    from google.models.cli._project import VLLMEngineConfig
+
+    monkeypatch.setattr(
+        cmd_deploy_mod, "ensure_authenticated", lambda interactive: True
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod,
+        "read_deployment_config",
+        lambda project_dir=None: DeploymentConfig(machine_type="g2-standard-12"),
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod,
+        "read_engine_config",
+        lambda project_dir=None: VLLMEngineConfig.from_dict(
+            {"engine": "vllm", "tensor_parallel_size": 1}
+        ),
+    )
+    monkeypatch.setattr(cmd_deploy_mod, "check_bucket_exists", lambda bucket: True)
+    monkeypatch.setattr(
+        cmd_deploy_mod, "check_model_exists_in_gcs", lambda bucket, repo: True
+    )
+    monkeypatch.setattr(cmd_deploy_mod, "write_env", lambda env_vars, **kwargs: None)
+    monkeypatch.setattr(cmd_deploy_mod, "write_operation", lambda **kwargs: None)
+    monkeypatch.setattr(
+        cmd_deploy_mod.settings, "artifact_base_path", None, raising=False
+    )
+    monkeypatch.setattr(
+        cmd_deploy_mod.settings, "service_account_email", None, raising=False
+    )
+
+    def fake_deploy_to_geap(**kwargs):
+        if kwargs.get("dry_run"):
+            return {
+                "status": "DRY_RUN",
+                "manifest": {"container_args": ["--served-model-name=Qwen/Qwen3.5-9B"]},
+            }
+        return {
+            "status": "DEPLOYED",
+            "endpoint_resource_name": "projects/123/locations/us-central1/endpoints/456",
+            "endpoint_url": "https://example.vertexai.goog/v1/invoke",
+            "operation_name": "projects/123/locations/us-central1/operations/789",
+        }
+
+    monkeypatch.setattr(cmd_deploy_mod, "deploy_model_to_geap", fake_deploy_to_geap)
+
+    base_args = [
+        "deploy",
+        "--model-id",
+        "Qwen/Qwen3.5-9B",
+        "--bucket",
+        "my-bucket",
+        "--project",
+        "test-proj",
+        "--region",
+        "us-central1",
+    ]
+
+    for extra_args in (["--dry-run"], []):
+        res = runner.invoke(app, base_args + extra_args)
+        assert res.exit_code == 0, res.output
+        assert "vLLM Parameters:" in res.stdout
+        assert "--model=gs://my-bucket/Qwen3.5-9B" in res.stdout
+        assert "--served-model-name=Qwen/Qwen3.5-9B" in res.stdout
+        assert "--reasoning-parser=qwen3" in res.stdout
+        assert "--tool-call-parser=qwen3_coder" in res.stdout
+        assert "--enable-auto-tool-choice" in res.stdout
+
+
+
 
 
 
