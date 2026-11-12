@@ -294,7 +294,7 @@ Queries Google Cloud's **GKE Inference Quickstart API** (`google.cloud.gkerecomm
 3. **Client-Side Filtering & Normalization**:
    - Classifies profiles as `TPU` (if `"tpu"` in `acceleratorType` or `instanceType` starts with `"ct"`, e.g., `ct6e-standard-4t`) or `GPU`, filtering by `--family` (`gpu`, `tpu`, `any`).
    - Matches `--use-case` via shorthand keyword aliases (`chatbot`, `summarization`, `code-completion`, `text-generation`, `deep-research`, `customer-support`) and populates known `(input, output)` token lengths (`KNOWN_USE_CASE_LENGTHS`) when omitted by the SDK.
-   - Sets `engine_params.tensor_parallel_size = accelerator_count`.
+   - Sets `engine_params.tensor_parallel_size = accelerator_count` and, for `vllm` profiles, enriches `engine_params` via `get_vllm_spec_params(model_id)` with the requested model's `served_model_name`, `reasoning_parser`, `tool_call_parser`, and `enable_auto_tool_choice` (always derived from the user's requested `model_id` rather than any hardware proxy model).
 4. **Custom Token Distribution Interpolation (`-I/--input-tokens` & `-O/--output-tokens`)**:
    - Groups empirical profiles by `(machine_type, accelerator_type, accelerator_count, model_server)`.
    - Maps `(average_input_length, average_output_length)` and `(target_input_tokens, target_output_tokens)` into $\log_2$ coordinate space:
@@ -304,7 +304,7 @@ Queries Google Cloud's **GKE Inference Quickstart API** (`google.cloud.gkerecomm
      $$H = \text{Cost}_{\text{in}} \times \left(\frac{L_{\text{in}}}{L_{\text{out}}} + R\right) \times \text{Tput}_{\text{out}} \times \frac{3600}{10^6}$$
      Since $H$ is invariant for a fixed machine SKU, it rescales token costs at the new interpolated throughput $\text{Tput}_{\text{interp}}$ and length ratio $r = T_{\text{in}} / T_{\text{out}}$:
      $$\text{Cost}_{\text{in,new}} = \frac{H \times 10^6}{3600 \times \text{Tput}_{\text{interp}} \times (r + R)}, \quad \text{Cost}_{\text{out,new}} = R \times \text{Cost}_{\text{in,new}}$$
-5. **Interactive Application (`--apply`)**: Renders either JSON (`--format json`) or a Rich table sorted by `cost`, `throughput`, `ttft`, or `ntpot` (prefixing interpolated metrics with `~`), lets the user pick any rank `1..N`, and writes `machine_type` to `config/deployment_spec.yaml` and `tensor_parallel_size` to `config/engine_config.yaml`.
+5. **Interactive Application (`--apply`) & vLLM Flag Surfacing**: Renders either JSON (`--format json`, including top-level `vllm_args` and per-candidate `engine_params`) or a Rich table sorted by `cost`, `throughput`, `ttft`, or `ntpot` (prefixing interpolated metrics with `~`), echoes the resolved `vLLM Parameters` block (`--served-model-name`, `--tensor-parallel-size`, `--reasoning-parser`, `--enable-auto-tool-choice`, `--tool-call-parser`) beneath the top recommendation, lets the user pick any rank `1..N`, and writes `machine_type` to `config/deployment_spec.yaml` and `tensor_parallel_size` to `config/engine_config.yaml`.
 
 #### 🧭 Pragmatic Engineer's View
 Choosing cloud AI hardware by guesswork is notoriously expensive: pick too small a machine and the model crashes out of memory; pick too big a machine and you burn thousands of dollars a month.
@@ -367,8 +367,8 @@ sequenceDiagram
    - Resolves `model_uri` (`gs://<bucket>/<path>`): if `base_path` is provided, checks whether `.safetensors` files already exist directly under `base_path` or under `base_path/<model_name>`; otherwise checks `<bucket>/<model_name>`.
    - If absent (and not `--dry-run`), `copy_hf_model_to_gcs()` downloads the repo to `tmp/<org--model>` via `huggingface_hub.snapshot_download` (ignoring legacy `*.bin`, `*.pth`, `*.gguf`, `.gitattributes`, `.cache*`), filters out any nested `.cache` artifacts, uploads concurrently via `transfer_manager.upload_many_from_filenames(..., max_workers=8)`, and cleans up `tmp/` in a `finally` block.
 3. **Automatic IAM Provisioning**: When a custom `service_account` is specified, `configure_sa_permissions()` inspects the project's IAM policy via `resourcemanager_v3.ProjectsClient` and idempotently appends `roles/storage.objectViewer` if missing.
-4. **Container Argument Synthesis (`build_container_args`)**:
-   - **vLLM**: Prepends `["python3", "-m", "vllm.entrypoints.openai.api_server", "--model=<gs://...>", "--served-model-name=<model_id>", "--host=0.0.0.0", "--port=8080"]` plus `--trust-remote-code` (default `True`) and any explicitly configured keys in `engine_config.yaml` converted from `snake_case` to `--kebab-case`.
+4. **Container Argument Synthesis & Surfacing (`build_container_args` & `cmd_deploy.py`)**:
+   - **vLLM**: Prepends `["python3", "-m", "vllm.entrypoints.openai.api_server", "--model=<gs://...>", "--served-model-name=<model_id>", "--host=0.0.0.0", "--port=8080"]` plus `--trust-remote-code` (default `True`), automatically resolves model-specific `--reasoning-parser=<parser>`, `--tool-call-parser=<parser>`, and `--enable-auto-tool-choice` via `get_vllm_spec_params()` from `MODELS_SPECS` (whenever `tool_call_parser` is defined and not explicitly overridden in `engine_config.yaml`), and appends any explicitly configured keys in `engine_config.yaml` converted from `snake_case` to `--kebab-case`. Both live `models-cli deploy` and `models-cli deploy --dry-run` print a `⚙️  vLLM Parameters:` block listing every resolved `--flag` before initiating deployment.
    - **SGLang**: Passes `["--host=0.0.0.0", "--port=8080", "--trust-remote-code", ...]` (allowing the Google pre-built SGLang container entrypoint to handle `AIP_STORAGE_URI` / model path resolution).
 5. **Provisioning & Rollback (`deploy_model_to_geap`)**:
    - Extends `google.api_core.future.polling.DEFAULT_POLLING._timeout` to `3600`s so large model registrations don't hit GAPIC's 15-minute default timeout.
@@ -567,6 +567,7 @@ flowchart TD
    - **`ModelOrigin`**: `GOOGLE` (`"google"`), `QWEN` (`"qwen"`), `META` (`"meta"`), `MISTRAL` (`"mistral"`), `DEEPSEEK_AI` (`"deepseek-ai"`), `MOONSHOTAI` (`"moonshotai"`), `OPENAI` (`"openai"`).
    - **`ModelArchitecture`**: `DENSE` (`"dense"`) vs. `MOE` (`"moe"`).
    - **`ModelQuantization`**: `NONE` (`"none"`), `FP8` (`"fp8"`), `GPTQ_4BIT` (`"gptq-4bit"`), `MXFP4` (`"mxfp4"`).
+   - **`ReasoningParser` & `ToolCallParser` (Zero-Prompt vLLM Serving Flags)**: Encodes each model's native chain-of-thought parser (`gemma4`, `qwen3`, `deepseek_r1`, `kimi_k2`, `openai_gptoss`, or `None`) and function-calling parser (`gemma4`, `hermes`, `qwen3_coder`, `llama3_json`, `llama4_pythonic`, `mistral`, `deepseek_v3`, `kimi_k2`, `openai`, or `None`), read automatically by `build_container_args()` during `deploy` alongside `--enable-auto-tool-choice`.
    - **Numeric & Routing Fields**: `total_parameters_b` (`1.0` to `1000.0`), `active_parameters_b`, `total_experts`, `activated_experts`, `shared_experts`, `gke_recommender_supported` (`bool`), `rank`, `timestamp` (ISO `YYYY-MM-DD`), and `model_card_url`.
 3. **4-Tier Similarity Matching (`find_most_similar_supported_model` in `recommend_utils.py`)**:  
    When `lookup_model_spec(model_id)` (which resolves both `org/model` repo IDs and short `model_name` strings case-insensitively) finds `gke_recommender_supported == False`, it selects a benchmark proxy from the 23 supported models following a strict 4-level hierarchy:
