@@ -778,3 +778,71 @@ def test_recommend_utils_preserves_lazy_gkerecommender_import():
     assert res.returncode == 0, res.stderr
 
 
+def test_get_recommendations_surfaces_requested_model_vllm_parsers():
+    """Ensure requested model parsers are used even when a proxy model has different parsers."""
+    mock_client = MagicMock()
+    mock_client.fetch_profiles.return_value = [_make_mock_profile()]
+
+    # Qwen/Qwen3.5-9B uses proxy Qwen/Qwen3-8B-FP8 (hermes), but its own spec has qwen3_coder
+    recs = get_recommendations("Qwen/Qwen3.5-9B", client=mock_client)
+    assert len(recs) == 1
+    params = recs[0]["engine_params"]
+    assert params["served_model_name"] == "Qwen/Qwen3.5-9B"
+    assert params["reasoning_parser"] == "qwen3"
+    assert params["tool_call_parser"] == "qwen3_coder"
+    assert params["enable_auto_tool_choice"] is True
+
+
+def test_cli_recommend_surfaces_vllm_parameters_table_and_json(monkeypatch):
+    import json
+
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.ensure_authenticated",
+        lambda **kwargs: True,
+    )
+    sample_rec = {
+        "machine_type": "g2-standard-12",
+        "accelerator_type": "nvidia-l4",
+        "accelerator_count": 1,
+        "chip_name": "nvidia-l4 (1x)",
+        "family": "gpu",
+        "input_cost_per_m": 0.019,
+        "output_cost_per_m": 0.078,
+        "output_input_cost_ratio": 4.0,
+        "pricing_model": "on-demand",
+        "ttft_ms": 120,
+        "ntpot_ms": 18,
+        "output_tokens_per_sec": 1059,
+        "model_server": "vllm",
+        "engine_params": {"tensor_parallel_size": 1},
+        "proxy_model": "Qwen/Qwen3-8B-FP8",
+        "requested_model": "Qwen/Qwen3.5-9B",
+    }
+    monkeypatch.setattr(
+        "google.models.cli.recommend.cmd_recommend.get_recommendations",
+        lambda **kwargs: [dict(sample_rec)],
+    )
+
+    table_res = runner.invoke(recommend_cmd, ["--model", "Qwen/Qwen3.5-9B"])
+    assert table_res.exit_code == 0
+    assert "vLLM Parameters:" in table_res.output
+    assert "--served-model-name=Qwen/Qwen3.5-9B" in table_res.output
+    assert "--tensor-parallel-size=1" in table_res.output
+    assert "--reasoning-parser=qwen3" in table_res.output
+    assert "--enable-auto-tool-choice" in table_res.output
+    assert "--tool-call-parser=qwen3_coder" in table_res.output
+
+    json_res = runner.invoke(
+        recommend_cmd, ["--model", "Qwen/Qwen3.5-9B", "--format", "json"]
+    )
+    assert json_res.exit_code == 0
+    payload = json.loads(json_res.output)
+    assert "--served-model-name=Qwen/Qwen3.5-9B" in payload["vllm_args"]
+    assert "--reasoning-parser=qwen3" in payload["vllm_args"]
+    assert "--enable-auto-tool-choice" in payload["vllm_args"]
+    assert "--tool-call-parser=qwen3_coder" in payload["vllm_args"]
+    assert payload["recommendations"][0]["engine_params"]["tool_call_parser"] == "qwen3_coder"
+
+
+
