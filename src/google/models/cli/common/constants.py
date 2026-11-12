@@ -15,6 +15,7 @@
 """Constants and default configuration values for models-cli."""
 
 from enum import Enum
+from typing import Any
 
 # Google Pre-built Serving Container Images for Gemini Enterprise Online Prediction
 DEFAULT_VLLM_CONTAINER_IMAGE = (
@@ -106,6 +107,27 @@ class ModelQuantization(str, Enum):
     FP8 = "fp8"
     GPTQ_4BIT = "gptq-4bit"
     MXFP4 = "mxfp4"
+
+
+class ReasoningParser(str, Enum):
+    GEMMA4 = "gemma4"
+    QWEN3 = "qwen3"
+    DEEPSEEK_R1 = "deepseek_r1"
+    KIMI_K2 = "kimi_k2"
+    OPENAI_GPTOSS = "openai_gptoss"
+
+
+class ToolCallParser(str, Enum):
+    GEMMA4 = "gemma4"
+    HERMES = "hermes"
+    QWEN3_CODER = "qwen3_coder"
+    LLAMA3_JSON = "llama3_json"
+    LLAMA4_PYTHONIC = "llama4_pythonic"
+    MISTRAL = "mistral"
+    DEEPSEEK_V3 = "deepseek_v3"
+    KIMI_K2 = "kimi_k2"
+    OPENAI = "openai"
+    PYTHONIC = "pythonic"
 
 
 DEFAULT_MODEL_REPO = "google/gemma-4-31B-it"
@@ -438,7 +460,7 @@ HARDWARE_SPECS: dict[str, dict] = {
 }
 
 # Standard Open-Weights Model Catalog & Architecture Specifications
-MODELS_SPECS: dict[str, dict] = {
+MODELS_SPECS: dict[str, dict[str, Any]] = {
     # Google (Gemma Series)
     "google/gemma-2-2b-it": {
         "model_name": "gemma-2-2b-it",
@@ -450,6 +472,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": None,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -465,6 +489,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": None,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -480,6 +506,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": None,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -495,6 +523,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": None,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -510,6 +540,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 8,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.GEMMA4,
+        "tool_call_parser": ToolCallParser.GEMMA4,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -525,6 +557,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.GEMMA4,
+        "tool_call_parser": ToolCallParser.GEMMA4,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -541,6 +575,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.FP8,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.HERMES,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -556,6 +592,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.HERMES,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -571,6 +609,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.FP8,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.HERMES,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -586,6 +626,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 8,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.HERMES,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -601,6 +643,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 10,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -616,6 +660,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -631,6 +677,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 8,
         "shared_experts": 1,
         "quantization": ModelQuantization.GPTQ_4BIT,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -646,6 +694,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 10,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -661,6 +711,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -676,6 +728,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 8,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -691,6 +745,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 8,
         "shared_experts": 1,
         "quantization": ModelQuantization.FP8,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -706,6 +762,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -721,6 +779,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.FP8,
+        "reasoning_parser": ReasoningParser.QWEN3,
+        "tool_call_parser": ToolCallParser.QWEN3_CODER,
         "gke_recommender_supported": False,
         "rank": None,
         "timestamp": "2026-11-04",
@@ -737,6 +797,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": None,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -752,6 +814,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.LLAMA3_JSON,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -767,6 +831,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.LLAMA3_JSON,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -782,6 +848,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 2,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.LLAMA4_PYTHONIC,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -797,6 +865,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 16,
         "shared_experts": 1,
         "quantization": ModelQuantization.FP8,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.LLAMA4_PYTHONIC,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -813,6 +883,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": None,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.MISTRAL,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -828,6 +900,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 2,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.MISTRAL,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -843,6 +917,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 2,
         "shared_experts": None,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": None,
+        "tool_call_parser": ToolCallParser.MISTRAL,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -859,6 +935,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 256,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.DEEPSEEK_R1,
+        "tool_call_parser": ToolCallParser.DEEPSEEK_V3,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -874,6 +952,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 256,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.DEEPSEEK_R1,
+        "tool_call_parser": None,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -890,6 +970,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 8,
         "shared_experts": 1,
         "quantization": ModelQuantization.NONE,
+        "reasoning_parser": ReasoningParser.KIMI_K2,
+        "tool_call_parser": ToolCallParser.KIMI_K2,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -906,6 +988,8 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 4,
         "shared_experts": None,
         "quantization": ModelQuantization.MXFP4,
+        "reasoning_parser": ReasoningParser.OPENAI_GPTOSS,
+        "tool_call_parser": ToolCallParser.OPENAI,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-10",
@@ -921,9 +1005,67 @@ MODELS_SPECS: dict[str, dict] = {
         "activated_experts": 4,
         "shared_experts": None,
         "quantization": ModelQuantization.MXFP4,
+        "reasoning_parser": ReasoningParser.OPENAI_GPTOSS,
+        "tool_call_parser": ToolCallParser.OPENAI,
         "gke_recommender_supported": True,
         "rank": None,
         "timestamp": "2026-11-04",
         "model_card_url": "https://huggingface.co/openai/gpt-oss-120b",
     },
 }
+
+
+def lookup_model_spec(
+    model_id: str,
+    models_specs: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Looks up a model in MODELS_SPECS by full repo ID or short model_name."""
+    catalog = models_specs if models_specs is not None else MODELS_SPECS
+    cleaned = model_id.strip()
+    if not cleaned:
+        return None
+
+    if cleaned in catalog:
+        return cleaned, catalog[cleaned]
+
+    lowered = cleaned.lower()
+    for repo_id, spec in catalog.items():
+        if repo_id.lower() == lowered:
+            return repo_id, spec
+
+    for repo_id, spec in catalog.items():
+        if str(spec.get("model_name", "")).lower() == lowered:
+            return repo_id, spec
+
+    return None
+
+
+def get_vllm_spec_params(
+    model_id: str | None,
+    models_specs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return model-specific vLLM serving parameters derived from MODELS_SPECS.
+
+    Includes ``served_model_name`` and, when defined on the catalog entry,
+    ``reasoning_parser``, ``tool_call_parser``, and ``enable_auto_tool_choice``.
+    """
+    if not model_id or not model_id.strip():
+        return {}
+
+    cleaned = model_id.strip()
+    spec_entry = lookup_model_spec(cleaned, models_specs=models_specs)
+    served_name = spec_entry[0] if spec_entry is not None else cleaned
+    model_spec = spec_entry[1] if spec_entry is not None else {}
+
+    params: dict[str, Any] = {"served_model_name": served_name}
+
+    rp = model_spec.get("reasoning_parser")
+    if rp is not None:
+        params["reasoning_parser"] = rp.value if hasattr(rp, "value") else str(rp)
+
+    tcp = model_spec.get("tool_call_parser")
+    if tcp is not None:
+        params["tool_call_parser"] = tcp.value if hasattr(tcp, "value") else str(tcp)
+        params["enable_auto_tool_choice"] = True
+
+    return params
