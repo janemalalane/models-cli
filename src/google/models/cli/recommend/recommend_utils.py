@@ -30,6 +30,8 @@ from google.models.cli.common.constants import (
     MODELS_SPECS,
     AcceleratorFamily,
     ModelArchitecture,
+    get_vllm_spec_params,
+    lookup_model_spec,
 )
 
 if TYPE_CHECKING:
@@ -255,31 +257,6 @@ def _match_use_case(profile_use_case: str, target_use_case: str | None) -> bool:
     }
     keywords = aliases.get(target_lower, [target_lower])
     return any(kw in profile_lower for kw in keywords)
-
-
-def lookup_model_spec(
-    model_id: str,
-    models_specs: dict[str, dict[str, Any]] | None = None,
-) -> tuple[str, dict[str, Any]] | None:
-    """Looks up a model in MODELS_SPECS by full repo ID or short model_name."""
-    catalog = models_specs if models_specs is not None else MODELS_SPECS
-    cleaned = model_id.strip()
-    if not cleaned:
-        return None
-
-    if cleaned in catalog:
-        return cleaned, catalog[cleaned]
-
-    lowered = cleaned.lower()
-    for repo_id, spec in catalog.items():
-        if repo_id.lower() == lowered:
-            return repo_id, spec
-
-    for repo_id, spec in catalog.items():
-        if str(spec.get("model_name", "")).lower() == lowered:
-            return repo_id, spec
-
-    return None
 
 
 def find_most_similar_supported_model(
@@ -616,6 +593,20 @@ def get_recommendations(
         pricing = cost0.get("pricingModel") or target_pm
 
         server_info = d.get("modelServerInfo", {})
+        resolved_server = server_info.get("modelServer") or model_server or "vllm"
+        engine_params: dict[str, Any] = {
+            "tensor_parallel_size": accelerator_count,
+        }
+        if str(resolved_server).lower() == "vllm":
+            vllm_spec = get_vllm_spec_params(model_id)
+            for key in (
+                "served_model_name",
+                "reasoning_parser",
+                "tool_call_parser",
+                "enable_auto_tool_choice",
+            ):
+                if key in vllm_spec:
+                    engine_params[key] = vllm_spec[key]
 
         candidate = {
             "machine_type": instance_type,
@@ -649,11 +640,9 @@ def get_recommendations(
                     (profile_use_case or use_case or "").strip().lower(), (None, None)
                 )[1]
             ),
-            "model_server": server_info.get("modelServer") or model_server or "vllm",
+            "model_server": resolved_server,
             "model_server_version": server_info.get("modelServerVersion", ""),
-            "engine_params": {
-                "tensor_parallel_size": accelerator_count,
-            },
+            "engine_params": engine_params,
         }
         if proxy_model_id:
             candidate["proxy_model"] = proxy_model_id
