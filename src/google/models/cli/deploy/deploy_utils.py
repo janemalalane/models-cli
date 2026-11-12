@@ -43,6 +43,7 @@ from google.models.cli.common.constants import (
     HARDWARE_SPECS,
     AcceleratorFamily,
     InferenceEngine,
+    get_vllm_spec_params,
 )
 
 from google.models.cli._project import (
@@ -116,6 +117,17 @@ def build_container_args(
         params["trust_remote_code"] = True
 
     if isinstance(engine_config, VLLMEngineConfig):
+        vllm_spec = get_vllm_spec_params(served_model_name)
+
+        if "reasoning_parser" not in params and "reasoning_parser" in vllm_spec:
+            params["reasoning_parser"] = vllm_spec["reasoning_parser"]
+
+        if "tool_call_parser" not in params and "tool_call_parser" in vllm_spec:
+            params["tool_call_parser"] = vllm_spec["tool_call_parser"]
+
+        if "enable_auto_tool_choice" not in params and params.get("tool_call_parser"):
+            params["enable_auto_tool_choice"] = True
+
         args = [
             "python3",
             "-m",
